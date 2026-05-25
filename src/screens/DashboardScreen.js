@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, Image, Modal, TextInput, useWindowDimensions,
+  PanResponder, Animated,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
 
@@ -83,6 +84,62 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   const [incomeModal, setIncomeModal] = useState(null);
   const [incomeInput, setIncomeInput] = useState('');
 
+  // ── Drag-to-add-income refs ──────────────────────────────────────────────
+  const dragAnim = useRef(new Animated.ValueXY()).current;
+  const [isDragging, setIsDragging] = useState(false);
+  const gridRef = useRef(null);
+  const gridAbsPos = useRef(null);
+  const cellsRef = useRef([]);
+  const projIncomeRef = useRef({});
+
+  useEffect(() => { projIncomeRef.current = projectedIncome; }, [projectedIncome]);
+
+  const onGridLayout = useCallback(() => {
+    gridRef.current?.measure((fx, fy, width, height, px, py) => {
+      gridAbsPos.current = { x: px, y: py, width, height };
+    });
+  }, []);
+
+  const bagResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      dragAnim.setValue({ x: 0, y: 0 });
+      setIsDragging(true);
+      gridRef.current?.measure((fx, fy, width, height, px, py) => {
+        gridAbsPos.current = { x: px, y: py, width, height };
+      });
+    },
+    onPanResponderMove: Animated.event(
+      [null, { dx: dragAnim.x, dy: dragAnim.y }],
+      { useNativeDriver: false }
+    ),
+    onPanResponderRelease: (e) => {
+      const { pageX, pageY } = e.nativeEvent;
+      const grid = gridAbsPos.current;
+      if (grid && pageX >= grid.x && pageX <= grid.x + grid.width
+          && pageY >= grid.y && pageY <= grid.y + grid.height) {
+        const col = Math.min(6, Math.floor((pageX - grid.x) / (grid.width / 7)));
+        const row = Math.min(5, Math.floor((pageY - grid.y) / (grid.height / 6)));
+        const cell = cellsRef.current[row * 7 + col];
+        if (cell?.cur && cell?.str) {
+          const n = new Date(); n.setHours(0, 0, 0, 0);
+          if (new Date(cell.str + 'T00:00:00') >= n) {
+            const existing = projIncomeRef.current[cell.str];
+            setIncomeInput(existing ? String(existing) : '');
+            setIncomeModal(cell.str);
+          }
+        }
+      }
+      Animated.spring(dragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false, tension: 40, friction: 7 }).start();
+      setIsDragging(false);
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(dragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+      setIsDragging(false);
+    },
+  })).current;
+
   const daysInMonth = new Date(yr, mo + 1, 0).getDate();
   const firstDay    = new Date(yr, mo, 1).getDay();
   const prevDays    = new Date(yr, mo, 0).getDate();
@@ -91,6 +148,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   for (let i = firstDay - 1; i >= 0; i--) cells.push({ day: prevDays - i, cur: false, str: null });
   for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, cur: true, str: `${yr}-${pad(mo+1)}-${pad(d)}` });
   while (cells.length < 42) cells.push({ day: cells.length - firstDay - daysInMonth + 1, cur: false, str: null });
+  cellsRef.current = cells;
 
   const billsByDate = useMemo(() => {
     const map = {};
@@ -218,6 +276,14 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
               <Text style={cal.todayTxt}>Today</Text>
             </TouchableOpacity>
           )}
+          {!isMobile && (
+            <Animated.View
+              style={[cal.bagToken, isDragging && cal.bagDragging, { transform: dragAnim.getTranslateTransform() }]}
+              {...bagResponder.panHandlers}
+            >
+              <Text style={cal.bagEmoji}>💰</Text>
+            </Animated.View>
+          )}
           <TouchableOpacity style={cal.navBtn} onPress={goBack}><Text style={cal.navTxt}>‹</Text></TouchableOpacity>
           <TouchableOpacity style={cal.navBtn} onPress={goFwd}><Text style={cal.navTxt}>›</Text></TouchableOpacity>
         </View>
@@ -231,6 +297,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
       </View>
 
       {/* Grid */}
+      <View ref={gridRef} onLayout={onGridLayout}>
       {Array.from({ length: 6 }, (_, wi) => (
         <View key={wi} style={cal.week}>
           {cells.slice(wi * 7, wi * 7 + 7).map((cell, di) => {
@@ -260,32 +327,28 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
                 {!isMobile && (() => {
                   const rows = [];
                   if (incAmt > 0) rows.push(
-                    <TouchableOpacity key="inc" style={[cal.chip, { backgroundColor: C.income + '22' }]}
+                    <TouchableOpacity key="inc" style={[cal.chip, { backgroundColor: '#DCFCE7' }]}
                       onPress={() => { setIncomeInput(String(incAmt)); setIncomeModal(cell.str); }}>
                       <Text style={[cal.chipName, { color: C.income }]} numberOfLines={1}>💰 Income</Text>
                       <Text style={[cal.chipAmt, { color: C.income }]}>+${incAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
                     </TouchableOpacity>
                   );
-                  events.slice(0, 3 - (incAmt > 0 ? 1 : 0)).forEach((ev, ei) => {
+                  const slots = 3 - (incAmt > 0 ? 1 : 0);
+                  events.slice(0, slots).forEach((ev, ei) => {
                     const insuf = proj?.insufficient?.has(ev.id);
-                    const col = insuf ? C.bills : (CAT_COLOR[ev.category] || C.other);
+                    const textCol = insuf ? C.bills : (CAT_COLOR[ev.category] || C.other);
+                    const bg = insuf ? '#FEE2E2' : (ev.category === 'income' ? '#DCFCE7' : '#DCFCE7');
                     const sign = ev.category === 'income' ? '+' : '-';
                     rows.push(
-                      <View key={ei} style={[cal.chip, { backgroundColor: col + '22' }, insuf && cal.chipInsuf]}>
+                      <View key={ei} style={[cal.chip, { backgroundColor: bg }, insuf && cal.chipInsuf]}>
                         {insuf && <Text style={cal.warnTxt}>⚠ </Text>}
-                        <Text style={[cal.chipName, { color: col }]} numberOfLines={1}>{ev.name}</Text>
-                        <Text style={[cal.chipAmt, { color: col }]}>{sign}${Math.abs(ev.amount).toFixed(0)}</Text>
+                        <Text style={[cal.chipName, { color: textCol }]} numberOfLines={1}>{ev.name}</Text>
+                        <Text style={[cal.chipAmt, { color: textCol }]}>{sign}${Math.abs(ev.amount).toFixed(0)}</Text>
                       </View>
                     );
                   });
-                  const overflow = events.length - (3 - (incAmt > 0 ? 1 : 0));
+                  const overflow = events.length - slots;
                   if (overflow > 0) rows.push(<Text key="ov" style={cal.overflow}>+{overflow} more</Text>);
-                  if (isFuture) rows.push(
-                    <TouchableOpacity key="addinc" style={cal.addIncBtn}
-                      onPress={() => { setIncomeInput(incAmt ? String(incAmt) : ''); setIncomeModal(cell.str); }}>
-                      <Text style={cal.addIncTxt}>💰 + income</Text>
-                    </TouchableOpacity>
-                  );
                   return rows;
                 })()}
 
@@ -304,6 +367,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
           })}
         </View>
       ))}
+      </View>
 
       {/* Legend */}
       <View style={[cal.legend, isMobile && cal.legendMobile]}>
@@ -731,8 +795,9 @@ const cal = StyleSheet.create({
   projBal: { marginLeft: 'auto', fontSize: 11, fontWeight: '700' },
   chipInsuf: { borderWidth: 1, borderColor: C.bills },
   warnTxt: { fontSize: 10, color: C.bills },
-  addIncBtn: { marginTop: 'auto', paddingTop: 3 },
-  addIncTxt: { fontSize: 10, color: C.income, fontWeight: '600' },
+  bagToken: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center', backgroundColor: '#DCFCE7', cursor: 'grab' },
+  bagDragging: { opacity: 0.85, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 10, cursor: 'grabbing', zIndex: 999 },
+  bagEmoji: { fontSize: 18 },
   incOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   incBox: { backgroundColor: '#fff', borderRadius: 16, padding: 20, width: 280, shadowColor: '#000', shadowOffset: {width:0,height:4}, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 },
   incTitle: { fontSize: 16, fontWeight: '700', color: C.text, marginBottom: 2 },
