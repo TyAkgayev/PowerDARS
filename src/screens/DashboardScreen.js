@@ -122,34 +122,35 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
     ),
     onPanResponderRelease: (e, gs) => {
       const ne = e.nativeEvent;
-      // clientX/clientY are viewport-relative, matching measure()'s px/py (getBoundingClientRect)
       const dropX = ne.clientX ?? ne.changedTouches?.[0]?.clientX ?? gs.moveX;
       const dropY = ne.clientY ?? ne.changedTouches?.[0]?.clientY ?? gs.moveY;
-      const doHitTest = (grid) => {
-        if (!grid || dropX == null || dropY == null) return;
-        if (dropX >= grid.x && dropX <= grid.x + grid.width
-            && dropY >= grid.y && dropY <= grid.y + grid.height) {
-          const col = Math.min(6, Math.floor((dropX - grid.x) / (grid.width / 7)));
-          const row = Math.min(5, Math.floor((dropY - grid.y) / (grid.height / 6)));
-          const cell = cellsRef.current[row * 7 + col];
-          if (cell?.cur && cell?.str) {
-            const n = new Date(); n.setHours(0, 0, 0, 0);
-            if (new Date(cell.str + 'T00:00:00') >= n) {
-              const existing = projIncomeRef.current[cell.str];
-              setIncomeInput(existing ? String(existing.amount ?? existing) : '');
-              setIncomeSource(existing?.source || '');
-              setIncomeModal(cell.str);
-            }
+
+      // getBoundingClientRect is synchronous and viewport-relative — same coord space as clientX/Y
+      let grid = null;
+      if (typeof document !== 'undefined') {
+        const el = document.getElementById('powerdars-cal-grid');
+        if (el) {
+          const r = el.getBoundingClientRect();
+          grid = { x: r.left, y: r.top, width: r.width, height: r.height };
+        }
+      }
+      grid = grid || gridAbsPos.current;
+
+      if (grid && dropX != null && dropY != null
+          && dropX >= grid.x && dropX <= grid.x + grid.width
+          && dropY >= grid.y && dropY <= grid.y + grid.height) {
+        const col = Math.min(6, Math.floor((dropX - grid.x) / (grid.width / 7)));
+        const row = Math.min(5, Math.floor((dropY - grid.y) / (grid.height / 6)));
+        const cell = cellsRef.current[row * 7 + col];
+        if (cell?.cur && cell?.str) {
+          const n = new Date(); n.setHours(0, 0, 0, 0);
+          if (new Date(cell.str + 'T00:00:00') >= n) {
+            const existing = projIncomeRef.current[cell.str];
+            setIncomeInput(existing ? String(existing.amount ?? existing) : '');
+            setIncomeSource(existing?.source || '');
+            setIncomeModal(cell.str);
           }
         }
-      };
-      if (gridRef.current) {
-        gridRef.current.measure((fx, fy, w, h, px, py) => {
-          gridAbsPos.current = { x: px, y: py, width: w, height: h };
-          doHitTest(gridAbsPos.current);
-        });
-      } else {
-        doHitTest(gridAbsPos.current);
       }
       Animated.spring(dragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false, tension: 40, friction: 7 }).start();
       setIsDragging(false);
@@ -320,7 +321,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
       </View>
 
       {/* Grid */}
-      <View ref={gridRef} onLayout={onGridLayout}>
+      <View ref={gridRef} nativeID="powerdars-cal-grid" onLayout={onGridLayout}>
       {Array.from({ length: 6 }, (_, wi) => (
         <View key={wi} style={cal.week}>
           {cells.slice(wi * 7, wi * 7 + 7).map((cell, di) => {
