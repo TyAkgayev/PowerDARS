@@ -24,7 +24,7 @@ export const ICONS = {
   other:        '📄',   // require('../../assets/icons/other.png')
 
   // ── UI elements ─────────────────────────────────────────────────────────
-  spinner:       require('../../assets/icons/spinner.png'),
+  spinner:       '↻',   // require('../../assets/icons/spinner.png')
 
   // ── Bill / event categories ──────────────────────────────────────────────
   bills:        '📄',   // require('../../assets/icons/bills.png')
