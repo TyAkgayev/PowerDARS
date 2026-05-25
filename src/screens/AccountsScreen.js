@@ -35,7 +35,7 @@ const ACCT_TYPES = [
 const FIELD_TYPES = [
   { id: 'currency', label: 'Currency ($)' },
   { id: 'number',   label: 'Number' },
-  { id: 'date',     label: 'Date (YYYY-MM-DD)' },
+  { id: 'date',     label: 'Day of Month (1–31)' },
   { id: 'text',     label: 'Text' },
   { id: 'percent',  label: 'Percentage (%)' },
 ];
@@ -46,14 +46,14 @@ const ACCT_COLORS = PALETTE;
 const SUGGESTED_FIELDS = {
   checking:     [{ label: 'Balance', type: 'currency' }, { label: 'Available Balance', type: 'currency' }],
   savings:      [{ label: 'Balance', type: 'currency' }],
-  credit:       [{ label: 'Current Balance', type: 'currency' }, { label: 'Due Date', type: 'date' }, { label: 'Minimum Due', type: 'currency' }, { label: 'Credit Limit', type: 'currency' }],
+  credit:       [{ label: 'Current Balance', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Minimum Due', type: 'currency' }, { label: 'Credit Limit', type: 'currency' }],
   investment:   [{ label: 'Portfolio Value', type: 'currency' }, { label: 'Daily Change', type: 'currency' }],
-  utility:      [{ label: 'Amount Due', type: 'currency' }, { label: 'Due Date', type: 'date' }],
-  subscription: [{ label: 'Monthly Amount', type: 'currency' }, { label: 'Next Bill Date', type: 'date' }],
-  phone:        [{ label: 'Monthly Bill', type: 'currency' }, { label: 'Due Date', type: 'date' }, { label: 'Account Number', type: 'text' }],
-  loan:         [{ label: 'Remaining Balance', type: 'currency' }, { label: 'Monthly Payment', type: 'currency' }, { label: 'Due Date', type: 'date' }],
-  car_lease:    [{ label: 'Monthly Payment', type: 'currency' }, { label: 'Due Date', type: 'date' }, { label: 'Remaining Payments', type: 'number' }, { label: 'Lease End Date', type: 'date' }],
-  car_insurance:[{ label: 'Monthly Premium', type: 'currency' }, { label: 'Due Date', type: 'date' }, { label: 'Policy Number', type: 'text' }, { label: 'Coverage End Date', type: 'date' }],
+  utility:      [{ label: 'Amount Due', type: 'currency' }, { label: 'Due Day', type: 'date' }],
+  subscription: [{ label: 'Monthly Amount', type: 'currency' }, { label: 'Next Bill Day', type: 'date' }],
+  phone:        [{ label: 'Monthly Bill', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Account Number', type: 'text' }],
+  loan:         [{ label: 'Remaining Balance', type: 'currency' }, { label: 'Monthly Payment', type: 'currency' }, { label: 'Due Day', type: 'date' }],
+  car_lease:    [{ label: 'Monthly Payment', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Remaining Payments', type: 'number' }, { label: 'Lease End Date', type: 'text' }],
+  car_insurance:[{ label: 'Monthly Premium', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Policy Number', type: 'text' }, { label: 'Coverage End Date', type: 'text' }],
   other:        [{ label: 'Amount', type: 'currency' }],
 };
 

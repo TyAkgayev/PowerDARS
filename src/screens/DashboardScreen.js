@@ -27,6 +27,7 @@ const CAT_COLOR = {
   income: C.income,
   reminder: C.reminder,
   personal: C.personal,
+  wireless: '#0EA5E9',
   other: C.other,
 };
 
@@ -74,7 +75,7 @@ function Sparkline({ data = [], color = '#4361EE', width = 90, height = 36 }) {
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
-function CalendarView({ bills, isMobile }) {
+function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   const today = new Date();
   const [yr, setYr] = useState(today.getFullYear());
   const [mo, setMo] = useState(today.getMonth());
@@ -97,6 +98,25 @@ function CalendarView({ bills, isMobile }) {
     });
     return map;
   }, [bills]);
+
+  const accountEventsByDate = useMemo(() => {
+    const map = {};
+    const daysInMo = new Date(yr, mo + 1, 0).getDate();
+    (accounts || []).forEach(acc => {
+      (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
+        const dayVal = getLatestValue(darsHistory || {}, acc.id, field.id);
+        if (!dayVal) return;
+        const dayNum = parseInt(dayVal, 10);
+        if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInMo) return;
+        const dateStr = `${yr}-${pad(mo + 1)}-${pad(dayNum)}`;
+        if (!map[dateStr]) map[dateStr] = [];
+        const amtField = (acc.fields || []).find(f => f.type === 'currency');
+        const amount = amtField ? parseFloat(getLatestValue(darsHistory || {}, acc.id, amtField.id)) || 0 : 0;
+        map[dateStr].push({ id: acc.id + '_' + field.id, name: acc.name, category: 'bills', amount, icon: acc.icon });
+      });
+    });
+    return map;
+  }, [accounts, darsHistory, yr, mo]);
 
   const goBack = () => { if (mo === 0) { setMo(11); setYr(y => y-1); } else setMo(m => m-1); };
   const goFwd  = () => { if (mo === 11) { setMo(0); setYr(y => y+1); } else setMo(m => m+1); };
@@ -140,7 +160,7 @@ function CalendarView({ bills, isMobile }) {
               cell.day === today.getDate() &&
               mo === today.getMonth() &&
               yr === today.getFullYear();
-            const events = cell.str ? (billsByDate[cell.str] || []) : [];
+            const events = cell.str ? [...(billsByDate[cell.str] || []), ...(accountEventsByDate[cell.str] || [])] : [];
 
             return (
               <View key={di} style={[
@@ -206,7 +226,6 @@ function CalendarView({ bills, isMobile }) {
 }
 
 const BANK_TYPES = ['checking', 'savings', 'investment'];
-const DEBT_TYPES = ['credit', 'loan', 'car_lease', 'car_insurance'];
 
 function getLatestValue(darsHistory, accountId, fieldId) {
   const entries = Object.values(darsHistory).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -282,12 +301,13 @@ function BanksPanel({ accounts, darsHistory, isMobile }) {
   );
 }
 
-// ─── AccountsPanel ────────────────────────────────────────────────────────────
-function AccountsPanel({ accounts, darsHistory, isMobile }) {
+// ─── AccountSection ────────────────────────────────────────────────────────────
+function AccountSection({ title, types, accounts, darsHistory, isMobile, footerLabel, footerColor }) {
   const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
-  const debtAccounts = accounts.filter(a => !BANK_TYPES.includes(a.type));
+  const filtered = accounts.filter(a => types.includes(a.type));
+  if (filtered.length === 0) return null;
 
-  const creditTotal = debtAccounts.filter(a => DEBT_TYPES.includes(a.type)).reduce((sum, acc) => {
+  const total = filtered.reduce((sum, acc) => {
     const pf = acc.fields?.[0];
     if (!pf) return sum;
     const val = getLatestValue(darsHistory, acc.id, pf.id);
@@ -296,14 +316,12 @@ function AccountsPanel({ accounts, darsHistory, isMobile }) {
     return isNaN(n) ? sum : sum + Math.abs(n);
   }, 0);
 
-  if (debtAccounts.length === 0) return null;
-
   return (
     <View style={pnl.card}>
       <View style={pnl.header}>
-        <Text style={pnl.title}>Accounts</Text>
+        <Text style={pnl.title}>{title}</Text>
       </View>
-      {debtAccounts.map((acc, idx) => (
+      {filtered.map((acc, idx) => (
         <AccountRow
           key={acc.id}
           acc={acc}
@@ -312,10 +330,12 @@ function AccountsPanel({ accounts, darsHistory, isMobile }) {
           isMobile={isMobile}
         />
       ))}
-      <View style={pnl.totalFooter}>
-        <Text style={pnl.nwLabel}>Total Credit</Text>
-        <Text style={[pnl.nwValue, { color: C.bills }]}>{fmtCurrency(creditTotal)}</Text>
-      </View>
+      {footerLabel && (
+        <View style={pnl.totalFooter}>
+          <Text style={pnl.nwLabel}>{footerLabel}</Text>
+          <Text style={[pnl.nwValue, footerColor && { color: footerColor }]}>{fmtCurrency(total)}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -328,7 +348,7 @@ function UpcomingBills({ bills }) {
   );
 
   const getIcon = (cat) =>
-    cat === 'income' ? '💰' : cat === 'reminder' ? '🔔' : cat === 'personal' ? '💜' : '📄';
+    cat === 'income' ? '💰' : cat === 'reminder' ? '🔔' : cat === 'personal' ? '💜' : cat === 'wireless' ? '📶' : '📄';
 
   return (
     <View style={up.card}>
@@ -448,7 +468,7 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
   const [category, setCategory] = useState('bills');
   const [icon, setIcon] = useState('');
 
-  const CATS = ['bills','income','reminder','personal','other'];
+  const CATS = ['bills','income','reminder','personal','wireless','other'];
 
   const handleSave = async () => {
     if (!name.trim() || !dueDate.trim()) return;
@@ -530,24 +550,32 @@ export default function DashboardScreen() {
 
       {/* Body — row on desktop, column on mobile */}
       {isMobile ? (
-        // ── Mobile: Calendar → Banks → Tasks → Accounts → Upcoming ──
+        // ── Mobile: Calendar → Banks → Tasks → Car → Phone → Loans → Credit Cards → Upcoming ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} isMobile={true} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
-          <AccountsPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
+          <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Car" footerColor={C.bills} />
+          <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Phone" footerColor={C.bills} />
+          <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Loans" footerColor={C.bills} />
+          <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Credit" footerColor={C.bills} />
+          <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Other" footerColor={C.bills} />
           <UpcomingBills bills={bills} />
         </View>
       ) : (
         // ── Desktop: two-column ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} isMobile={false} />
+            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
             <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
-            <AccountsPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+            <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
+            <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} />
+            <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Loans" footerColor={C.bills} />
+            <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Credit" footerColor={C.bills} />
+            <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Other" footerColor={C.bills} />
             <UpcomingBills bills={bills} />
           </View>
         </View>
