@@ -78,11 +78,10 @@ function Sparkline({ data = [], color = '#4361EE', width = 90, height = 36 }) {
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
-function CalendarView({ bills, accounts, darsHistory, isMobile }) {
+function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome }) {
   const today = new Date();
   const [yr, setYr] = useState(today.getFullYear());
   const [mo, setMo] = useState(today.getMonth());
-  const [projectedIncome, setProjectedIncome] = useState({});
   const [incomeModal, setIncomeModal] = useState(null);
   const [incomeInput, setIncomeInput] = useState('');
   const [incomeSource, setIncomeSource] = useState('');
@@ -223,24 +222,58 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
     if (bankAccts.length === 0) return {};
 
     const now = new Date(); now.setHours(0, 0, 0, 0);
-    const moStart = new Date(yr, mo, 1);
-    const projFrom = moStart > now ? moStart : now;
-    const daysInMo = new Date(yr, mo + 1, 0).getDate();
+    const moEnd = new Date(yr, mo + 1, 0); moEnd.setHours(0, 0, 0, 0);
+    if (moEnd < now) return {}; // past month — no projection
 
+    // Build account payment events for any given year/month
+    const parseDayNum = (val) => {
+      if (!val) return NaN;
+      const s = String(val);
+      if (s.includes('-')) { const parts = s.split('-'); return parseInt(parts[parts.length - 1], 10); }
+      return parseInt(s, 10);
+    };
+    const acctEventsCache = {};
+    const getAcctEventsForDate = (dateStr, y, m) => {
+      const key = `${y}-${m}`;
+      if (!acctEventsCache[key]) {
+        const map = {};
+        const daysInM = new Date(y, m + 1, 0).getDate();
+        (accounts || []).forEach(acc => {
+          (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
+            const raw = field.value || getLatestValue(darsHistory || {}, acc.id, field.id);
+            const dayNum = parseDayNum(raw);
+            if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInM) return;
+            const ds = `${y}-${pad(m + 1)}-${pad(dayNum)}`;
+            if (!map[ds]) map[ds] = [];
+            const paymentRe = /due|payment|bill|premium|amount/i;
+            const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label))
+              || (acc.fields || []).find(f => f.type === 'currency');
+            const amount = amtField ? parseFloat(getLatestValue(darsHistory || {}, acc.id, amtField.id)) || 0 : 0;
+            map[ds].push({ id: acc.id + '_' + field.id, name: acc.name, category: 'bills', amount, icon: acc.icon });
+          });
+        });
+        acctEventsCache[key] = map;
+      }
+      return acctEventsCache[key][dateStr] || [];
+    };
+
+    // Walk day-by-day from today through end of viewed month so income/bills
+    // from intermediate months are included in the running balance.
     let balance = startBalance;
     const result = {};
-
-    for (let d = 1; d <= daysInMo; d++) {
-      const dateStr = `${yr}-${pad(mo + 1)}-${pad(d)}`;
-      const date = new Date(yr, mo, d); date.setHours(0, 0, 0, 0);
-      if (date < projFrom) continue;
+    const iterDate = new Date(now);
+    while (iterDate <= moEnd) {
+      const y = iterDate.getFullYear();
+      const m = iterDate.getMonth();
+      const d = iterDate.getDate();
+      const dateStr = `${y}-${pad(m + 1)}-${pad(d)}`;
 
       const incEntry = projectedIncome[dateStr];
       balance += incEntry ? (parseFloat(incEntry.amount ?? incEntry) || 0) : 0;
 
       const events = [
         ...(billsByDate[dateStr] || []),
-        ...(accountEventsByDate[dateStr] || []),
+        ...getAcctEventsForDate(dateStr, y, m),
       ];
       const insufficient = new Set();
       for (const ev of events) {
@@ -248,10 +281,12 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
         if (ev.category === 'income') { balance += amt; }
         else { if (balance < amt) insufficient.add(ev.id); balance -= amt; }
       }
-      result[dateStr] = { balance, insufficient };
+
+      if (y === yr && m === mo) result[dateStr] = { balance, insufficient };
+      iterDate.setDate(iterDate.getDate() + 1);
     }
     return result;
-  }, [accounts, darsHistory, billsByDate, accountEventsByDate, projectedIncome, yr, mo]);
+  }, [accounts, darsHistory, billsByDate, projectedIncome, yr, mo]);
 
   const goBack = () => { if (mo === 0) { setMo(11); setYr(y => y-1); } else setMo(m => m-1); };
   const goFwd  = () => { if (mo === 11) { setMo(0); setYr(y => y+1); } else setMo(m => m+1); };
@@ -260,23 +295,29 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
 
   const now = new Date(); now.setHours(0, 0, 0, 0);
 
+  const closeIncomeModal = () => { setIncomeModal(null); setIncomeInput(''); setIncomeSource(''); };
+
   const handleAddIncome = () => {
     const amt = parseFloat(incomeInput);
+    const newIncome = { ...projIncomeRef.current };
     if (!isNaN(amt) && amt > 0) {
-      setProjectedIncome(prev => ({ ...prev, [incomeModal]: { amount: amt, source: incomeSource.trim() } }));
+      newIncome[incomeModal] = { amount: amt, source: incomeSource.trim() };
     } else {
-      setProjectedIncome(prev => { const n = { ...prev }; delete n[incomeModal]; return n; });
+      delete newIncome[incomeModal];
     }
-    setIncomeModal(null); setIncomeInput(''); setIncomeSource('');
+    saveProjectedIncome(newIncome);
+    closeIncomeModal();
   };
 
   return (
     <View style={cal.card}>
       {/* Income injection modal */}
       <Modal visible={incomeModal !== null} transparent animationType="fade"
-        onRequestClose={() => { setIncomeModal(null); setIncomeInput(''); setIncomeSource(''); }}>
-        <TouchableOpacity style={cal.incOverlay} activeOpacity={1}
-          onPress={() => { setIncomeModal(null); setIncomeInput(''); setIncomeSource(''); }}>
+        onRequestClose={closeIncomeModal}>
+        <View style={cal.incOverlay}>
+          {/* Dismiss layer — sits behind the dialog box */}
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={closeIncomeModal} />
+          {/* Dialog box — sibling of the dismiss layer, not a child, so taps here don't bubble up */}
           <View style={cal.incBox}>
             <Text style={cal.incTitle}>Projected Income</Text>
             <Text style={cal.incDate}>{incomeModal}</Text>
@@ -285,7 +326,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
             <TextInput style={[cal.incInput, { marginTop: 8 }]} value={incomeSource} onChangeText={setIncomeSource}
               placeholder="Source (e.g. Paycheck)" placeholderTextColor={C.faint} />
             <View style={cal.incBtns}>
-              <TouchableOpacity style={cal.incCancel} onPress={() => { setIncomeModal(null); setIncomeInput(''); setIncomeSource(''); }}>
+              <TouchableOpacity style={cal.incCancel} onPress={closeIncomeModal}>
                 <Text style={cal.incCancelTxt}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={cal.incSave} onPress={handleAddIncome}>
@@ -293,7 +334,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
               </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Header — zIndex:1 lifts the entire header (including the draggable bag) above the grid cells */}
@@ -724,7 +765,7 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName } = useApp();
+  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -752,7 +793,7 @@ export default function DashboardScreen() {
       {isMobile ? (
         // ── Mobile: Calendar → Banks → Tasks → Car → Phone → Loans → Credit Cards → Upcoming ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Car" footerColor={C.bills} />
@@ -766,7 +807,7 @@ export default function DashboardScreen() {
         // ── Desktop: two-column ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>

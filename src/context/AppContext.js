@@ -17,6 +17,7 @@ export function AppProvider({ children }) {
   const [bills, setBills] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [darsHistory, setDarsHistory] = useState({});
+  const [projectedIncome, setProjectedIncome] = useState({});
   const [loading, setLoading] = useState(true);
   const [currentScreen, setCurrentScreen] = useState('dashboard');
   const [userName, setUserNameState] = useState('Tymur');
@@ -56,6 +57,14 @@ export function AppProvider({ children }) {
       const hist = {};
       snap.docs.forEach(d => { hist[d.id] = { id: d.id, ...d.data() }; });
       setDarsHistory(hist);
+    });
+    return unsub;
+  }, []);
+
+  // Projected income listener
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'projectedIncome'), (snap) => {
+      if (snap.exists()) setProjectedIncome(snap.data().entries || {});
     });
     return unsub;
   }, []);
@@ -130,6 +139,11 @@ export function AppProvider({ children }) {
 
   const getTodaysDars = useCallback(() => darsHistory[todayStr()] || null, [darsHistory]);
 
+  // — Projected Income —
+  const saveProjectedIncome = useCallback(async (entries) => {
+    await setDoc(doc(db, 'settings', 'projectedIncome'), { entries });
+  }, []);
+
   // — Settings —
   const saveUserName = useCallback(async (name) => {
     await setDoc(doc(db, 'settings', 'app'), { userName: name }, { merge: true });
@@ -138,6 +152,7 @@ export function AppProvider({ children }) {
   return (
     <AppContext.Provider value={{
       accounts, bills, tasks, darsHistory, loading,
+      projectedIncome, saveProjectedIncome,
       currentScreen, setCurrentScreen,
       userName, saveUserName,
       addAccount, updateAccount, deleteAccount,
