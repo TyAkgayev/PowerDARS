@@ -119,7 +119,9 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
         if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInMo) return;
         const dateStr = `${yr}-${pad(mo + 1)}-${pad(dayNum)}`;
         if (!map[dateStr]) map[dateStr] = [];
-        const amtField = (acc.fields || []).find(f => f.type === 'currency');
+        const paymentRe = /due|payment|bill|premium|amount/i;
+        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label))
+          || (acc.fields || []).find(f => f.type === 'currency');
         const amount = amtField ? parseFloat(getLatestValue(darsHistory || {}, acc.id, amtField.id)) || 0 : 0;
         map[dateStr].push({ id: acc.id + '_' + field.id, name: acc.name, category: 'bills', amount, icon: acc.icon });
       });
