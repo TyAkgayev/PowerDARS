@@ -94,6 +94,8 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   const gridAbsPos = useRef(null);
   const cellsRef = useRef([]);
   const projIncomeRef = useRef({});
+  const hoverCellRef = useRef(null);
+  const [dragOverStr, setDragOverStr] = useState(null);
 
   useEffect(() => { projIncomeRef.current = projectedIncome; }, [projectedIncome]);
 
@@ -116,46 +118,49 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
         gridAbsPos.current = { x: px, y: py, width, height };
       });
     },
-    onPanResponderMove: Animated.event(
-      [null, { dx: dragAnim.x, dy: dragAnim.y }],
-      { useNativeDriver: false }
-    ),
-    onPanResponderRelease: (e, gs) => {
-      const ne = e.nativeEvent;
-      const dropX = ne.clientX ?? ne.changedTouches?.[0]?.clientX ?? gs.moveX;
-      const dropY = ne.clientY ?? ne.changedTouches?.[0]?.clientY ?? gs.moveY;
-
-      // getBoundingClientRect is synchronous and viewport-relative — same coord space as clientX/Y
-      let grid = null;
-      if (typeof document !== 'undefined') {
+    onPanResponderMove: (e, gs) => {
+      dragAnim.x.setValue(gs.dx);
+      dragAnim.y.setValue(gs.dy);
+      // Track which cell the bag is over so release can just read the ref
+      const x = e.nativeEvent.clientX ?? gs.moveX;
+      const y = e.nativeEvent.clientY ?? gs.moveY;
+      let found = null;
+      if (x != null && y != null && typeof document !== 'undefined') {
         const el = document.getElementById('powerdars-cal-grid');
         if (el) {
           const r = el.getBoundingClientRect();
-          grid = { x: r.left, y: r.top, width: r.width, height: r.height };
-        }
-      }
-      grid = grid || gridAbsPos.current;
-
-      if (grid && dropX != null && dropY != null
-          && dropX >= grid.x && dropX <= grid.x + grid.width
-          && dropY >= grid.y && dropY <= grid.y + grid.height) {
-        const col = Math.min(6, Math.floor((dropX - grid.x) / (grid.width / 7)));
-        const row = Math.min(5, Math.floor((dropY - grid.y) / (grid.height / 6)));
-        const cell = cellsRef.current[row * 7 + col];
-        if (cell?.cur && cell?.str) {
-          const n = new Date(); n.setHours(0, 0, 0, 0);
-          if (new Date(cell.str + 'T00:00:00') >= n) {
-            const existing = projIncomeRef.current[cell.str];
-            setIncomeInput(existing ? String(existing.amount ?? existing) : '');
-            setIncomeSource(existing?.source || '');
-            setIncomeModal(cell.str);
+          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            const col = Math.min(6, Math.floor((x - r.left) / (r.width / 7)));
+            const row = Math.min(5, Math.floor((y - r.top) / (r.height / 6)));
+            const cell = cellsRef.current[row * 7 + col];
+            if (cell?.cur && cell?.str) found = cell.str;
           }
         }
       }
+      if (found !== hoverCellRef.current) {
+        hoverCellRef.current = found;
+        setDragOverStr(found);
+      }
+    },
+    onPanResponderRelease: () => {
+      const dateStr = hoverCellRef.current;
+      if (dateStr) {
+        const n = new Date(); n.setHours(0, 0, 0, 0);
+        if (new Date(dateStr + 'T00:00:00') >= n) {
+          const existing = projIncomeRef.current[dateStr];
+          setIncomeInput(existing ? String(existing.amount ?? existing) : '');
+          setIncomeSource(existing?.source || '');
+          setIncomeModal(dateStr);
+        }
+      }
+      hoverCellRef.current = null;
+      setDragOverStr(null);
       Animated.spring(dragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false, tension: 40, friction: 7 }).start();
       setIsDragging(false);
     },
     onPanResponderTerminate: () => {
+      hoverCellRef.current = null;
+      setDragOverStr(null);
       Animated.spring(dragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
       setIsDragging(false);
     },
@@ -335,7 +340,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
             const isFuture = cell.cur && cellDate && cellDate >= now;
 
             return (
-              <View key={di} style={[cal.cell, isMobile && cal.cellMobile, isToday && cal.cellToday]}>
+              <View key={di} style={[cal.cell, isMobile && cal.cellMobile, isToday && cal.cellToday, cell.cur && cell.str === dragOverStr && cal.cellDrop]}>
                 {/* Day number row + projected end-of-day balance */}
                 <View style={cal.dayNum}>
                   <Text style={[cal.dayTxt, isMobile && cal.dayTxtMobile, !cell.cur && cal.dayMuted, isToday && cal.dayTxtToday]}>
@@ -816,6 +821,7 @@ const cal = StyleSheet.create({
   cell: { flex: 1, minHeight: 150, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 6, paddingHorizontal: 5, paddingBottom: 6 },
   cellMobile: { minHeight: 52 },
   cellToday: { borderTopWidth: 2, borderTopColor: C.primary },
+  cellDrop: { backgroundColor: C.primaryLight, borderTopWidth: 2, borderTopColor: C.primary },
   dayNum: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   dayTxt: { fontSize: 14, fontWeight: '600', color: C.text },
   dayTxtMobile: { fontSize: 12 },
