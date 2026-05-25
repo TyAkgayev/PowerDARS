@@ -5,6 +5,8 @@ import {
   PanResponder, Animated,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
+import { ICONS } from '../config/icons';
+import IconView from '../components/IconView';
 
 // ─── Colors ────────────────────────────────────────────────────────────────
 const C = {
@@ -83,6 +85,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   const [projectedIncome, setProjectedIncome] = useState({});
   const [incomeModal, setIncomeModal] = useState(null);
   const [incomeInput, setIncomeInput] = useState('');
+  const [incomeSource, setIncomeSource] = useState('');
 
   // ── Drag-to-add-income refs ──────────────────────────────────────────────
   const dragAnim = useRef(new Animated.ValueXY()).current;
@@ -117,22 +120,36 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
       [null, { dx: dragAnim.x, dy: dragAnim.y }],
       { useNativeDriver: false }
     ),
-    onPanResponderRelease: (e) => {
-      const { pageX, pageY } = e.nativeEvent;
-      const grid = gridAbsPos.current;
-      if (grid && pageX >= grid.x && pageX <= grid.x + grid.width
-          && pageY >= grid.y && pageY <= grid.y + grid.height) {
-        const col = Math.min(6, Math.floor((pageX - grid.x) / (grid.width / 7)));
-        const row = Math.min(5, Math.floor((pageY - grid.y) / (grid.height / 6)));
-        const cell = cellsRef.current[row * 7 + col];
-        if (cell?.cur && cell?.str) {
-          const n = new Date(); n.setHours(0, 0, 0, 0);
-          if (new Date(cell.str + 'T00:00:00') >= n) {
-            const existing = projIncomeRef.current[cell.str];
-            setIncomeInput(existing ? String(existing) : '');
-            setIncomeModal(cell.str);
+    onPanResponderRelease: (e, gs) => {
+      const ne = e.nativeEvent;
+      // clientX/clientY are viewport-relative, matching measure()'s px/py (getBoundingClientRect)
+      const dropX = ne.clientX ?? ne.changedTouches?.[0]?.clientX ?? gs.moveX;
+      const dropY = ne.clientY ?? ne.changedTouches?.[0]?.clientY ?? gs.moveY;
+      const doHitTest = (grid) => {
+        if (!grid || dropX == null || dropY == null) return;
+        if (dropX >= grid.x && dropX <= grid.x + grid.width
+            && dropY >= grid.y && dropY <= grid.y + grid.height) {
+          const col = Math.min(6, Math.floor((dropX - grid.x) / (grid.width / 7)));
+          const row = Math.min(5, Math.floor((dropY - grid.y) / (grid.height / 6)));
+          const cell = cellsRef.current[row * 7 + col];
+          if (cell?.cur && cell?.str) {
+            const n = new Date(); n.setHours(0, 0, 0, 0);
+            if (new Date(cell.str + 'T00:00:00') >= n) {
+              const existing = projIncomeRef.current[cell.str];
+              setIncomeInput(existing ? String(existing.amount ?? existing) : '');
+              setIncomeSource(existing?.source || '');
+              setIncomeModal(cell.str);
+            }
           }
         }
+      };
+      if (gridRef.current) {
+        gridRef.current.measure((fx, fy, w, h, px, py) => {
+          gridAbsPos.current = { x: px, y: py, width: w, height: h };
+          doHitTest(gridAbsPos.current);
+        });
+      } else {
+        doHitTest(gridAbsPos.current);
       }
       Animated.spring(dragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false, tension: 40, friction: 7 }).start();
       setIsDragging(false);
@@ -212,7 +229,8 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
       const date = new Date(yr, mo, d); date.setHours(0, 0, 0, 0);
       if (date < projFrom) continue;
 
-      balance += parseFloat(projectedIncome[dateStr]) || 0;
+      const incEntry = projectedIncome[dateStr];
+      balance += incEntry ? (parseFloat(incEntry.amount ?? incEntry) || 0) : 0;
 
       const events = [
         ...(billsByDate[dateStr] || []),
@@ -239,27 +257,29 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   const handleAddIncome = () => {
     const amt = parseFloat(incomeInput);
     if (!isNaN(amt) && amt > 0) {
-      setProjectedIncome(prev => ({ ...prev, [incomeModal]: amt }));
+      setProjectedIncome(prev => ({ ...prev, [incomeModal]: { amount: amt, source: incomeSource.trim() } }));
     } else {
       setProjectedIncome(prev => { const n = { ...prev }; delete n[incomeModal]; return n; });
     }
-    setIncomeModal(null); setIncomeInput('');
+    setIncomeModal(null); setIncomeInput(''); setIncomeSource('');
   };
 
   return (
     <View style={cal.card}>
       {/* Income injection modal */}
       <Modal visible={incomeModal !== null} transparent animationType="fade"
-        onRequestClose={() => { setIncomeModal(null); setIncomeInput(''); }}>
+        onRequestClose={() => { setIncomeModal(null); setIncomeInput(''); setIncomeSource(''); }}>
         <TouchableOpacity style={cal.incOverlay} activeOpacity={1}
-          onPress={() => { setIncomeModal(null); setIncomeInput(''); }}>
+          onPress={() => { setIncomeModal(null); setIncomeInput(''); setIncomeSource(''); }}>
           <View style={cal.incBox}>
             <Text style={cal.incTitle}>Projected Income</Text>
             <Text style={cal.incDate}>{incomeModal}</Text>
             <TextInput style={cal.incInput} value={incomeInput} onChangeText={setIncomeInput}
               keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={C.faint} autoFocus />
+            <TextInput style={[cal.incInput, { marginTop: 8 }]} value={incomeSource} onChangeText={setIncomeSource}
+              placeholder="Source (e.g. Paycheck)" placeholderTextColor={C.faint} />
             <View style={cal.incBtns}>
-              <TouchableOpacity style={cal.incCancel} onPress={() => { setIncomeModal(null); setIncomeInput(''); }}>
+              <TouchableOpacity style={cal.incCancel} onPress={() => { setIncomeModal(null); setIncomeInput(''); setIncomeSource(''); }}>
                 <Text style={cal.incCancelTxt}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={cal.incSave} onPress={handleAddIncome}>
@@ -307,7 +327,9 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
             const isToday = cell.cur && cell.day === today.getDate() && mo === today.getMonth() && yr === today.getFullYear();
             const events = cell.str ? [...(billsByDate[cell.str] || []), ...(accountEventsByDate[cell.str] || [])] : [];
             const proj = cell.str ? projection[cell.str] : null;
-            const incAmt = cell.str ? (projectedIncome[cell.str] || 0) : 0;
+            const incEntry = cell.str ? projectedIncome[cell.str] : null;
+            const incAmt = incEntry ? (parseFloat(incEntry.amount ?? incEntry) || 0) : 0;
+            const incSource = incEntry?.source || '';
             const cellDate = cell.str ? new Date(cell.str + 'T00:00:00') : null;
             const isFuture = cell.cur && cellDate && cellDate >= now;
 
@@ -331,7 +353,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
                   const rows = [];
                   if (incAmt > 0) rows.push(
                     <TouchableOpacity key="inc" style={[cal.chip, { backgroundColor: '#DCFCE7' }]}
-                      onPress={() => { setIncomeInput(String(incAmt)); setIncomeModal(cell.str); }}>
+                      onPress={() => { setIncomeInput(String(incAmt)); setIncomeSource(incSource); setIncomeModal(cell.str); }}>
                       <Text style={[cal.chipName, { color: C.income }]} numberOfLines={1}>💰 Income</Text>
                       <Text style={[cal.chipAmt, { color: C.income }]}>+${incAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
                     </TouchableOpacity>
@@ -415,7 +437,7 @@ function AccountRow({ acc, darsHistory, color, isMobile }) {
   return (
     <View style={[pnl.row, isMobile && pnl.rowMobile]}>
       <View style={[pnl.icon, { backgroundColor: color + '20' }]}>
-        <Text style={pnl.iconTxt}>{acc.icon || '🏦'}</Text>
+        <IconView icon={acc.icon || ICONS[acc.type] || ICONS.checking} size={20} />
       </View>
       <View style={pnl.info}>
         <Text style={pnl.acctName}>{acc.name}</Text>
@@ -511,8 +533,7 @@ function UpcomingBills({ bills }) {
     [bills]
   );
 
-  const getIcon = (cat) =>
-    cat === 'income' ? '💰' : cat === 'reminder' ? '🔔' : cat === 'personal' ? '💜' : cat === 'wireless' ? '📶' : '📄';
+  const getIcon = (cat) => ICONS[cat] || ICONS.bills;
 
   return (
     <View style={up.card}>

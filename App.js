@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AppProvider, useApp } from './src/context/AppContext';
@@ -56,6 +56,18 @@ function MainApp() {
 }
 
 export default function App() {
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      const style = document.createElement('style');
+      style.id = 'powerdars-no-select';
+      style.textContent = [
+        '* { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }',
+        'input, textarea { -webkit-user-select: text !important; user-select: text !important; }',
+      ].join('\n');
+      document.head.appendChild(style);
+      return () => document.getElementById('powerdars-no-select')?.remove();
+    }
+  }, []);
   return (
     <AppProvider>
       <MainApp />

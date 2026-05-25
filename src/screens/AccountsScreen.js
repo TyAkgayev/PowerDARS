@@ -4,6 +4,7 @@ import {
   StyleSheet, Modal, TextInput, Alert, useWindowDimensions,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
+import { ICONS } from '../config/icons';
 
 const C = {
   primary: '#4361EE',
@@ -19,17 +20,17 @@ const C = {
 };
 
 const ACCT_TYPES = [
-  { id: 'checking',     label: 'Checking',     icon: '🏦' },
-  { id: 'savings',      label: 'Savings',       icon: '💰' },
-  { id: 'credit',       label: 'Credit Card',   icon: '💳' },
-  { id: 'investment',   label: 'Investment',    icon: '📈' },
-  { id: 'utility',      label: 'Utility',       icon: '💡' },
-  { id: 'subscription', label: 'Subscription',  icon: '📱' },
-  { id: 'phone',        label: 'Phone',         icon: '📞' },
-  { id: 'loan',         label: 'Loan',          icon: '🏠' },
-  { id: 'car_lease',    label: 'Car Lease',     icon: '🚗' },
-  { id: 'car_insurance',label: 'Car Insurance', icon: '🛡️' },
-  { id: 'other',        label: 'Other',         icon: '📄' },
+  { id: 'checking',     label: 'Checking',     icon: ICONS.checking },
+  { id: 'savings',      label: 'Savings',       icon: ICONS.savings },
+  { id: 'credit',       label: 'Credit Card',   icon: ICONS.credit },
+  { id: 'investment',   label: 'Investment',    icon: ICONS.investment },
+  { id: 'utility',      label: 'Utility',       icon: ICONS.utility },
+  { id: 'subscription', label: 'Subscription',  icon: ICONS.subscription },
+  { id: 'phone',        label: 'Phone',         icon: ICONS.phone },
+  { id: 'loan',         label: 'Loan',          icon: ICONS.loan },
+  { id: 'car_lease',    label: 'Car Lease',     icon: ICONS.car_lease },
+  { id: 'car_insurance',label: 'Car Insurance', icon: ICONS.car_insurance },
+  { id: 'other',        label: 'Other',         icon: ICONS.other },
 ];
 
 const FIELD_TYPES = [
