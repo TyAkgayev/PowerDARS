@@ -28,7 +28,7 @@ function getPlaidClient(clientId, secret) {
 // ── createLinkToken ────────────────────────────────────────────────────────────
 // Called by the app to get a short-lived token that initialises Plaid Link UI.
 exports.createLinkToken = onRequest(
-  { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true },
+  { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true, invoker: 'public' },
   async (req, res) => {
     cors(req, res, async () => {
       try {
@@ -54,7 +54,7 @@ exports.createLinkToken = onRequest(
 // public_token here. We exchange it for a permanent access_token and store it
 // in Firestore (server-side only — never sent to the client).
 exports.exchangePublicToken = onRequest(
-  { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true },
+  { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true, invoker: 'public' },
   async (req, res) => {
     cors(req, res, async () => {
       try {
@@ -88,7 +88,7 @@ exports.exchangePublicToken = onRequest(
 // Fetches the latest balances for all linked accounts and writes them into
 // the existing dars/today document so the dashboard reflects real data.
 exports.syncBalances = onRequest(
-  { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true },
+  { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true, invoker: 'public' },
   async (req, res) => {
     cors(req, res, async () => {
       try {

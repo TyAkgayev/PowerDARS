@@ -1,7 +1,10 @@
 import { useCallback } from 'react';
 
-// Base URL for deployed Cloud Functions — set this after `firebase deploy --only functions`
-const FUNCTIONS_BASE = 'https://us-central1-dars-4e5d0.cloudfunctions.net';
+const FUNCTION_URLS = {
+  createLinkToken:    'https://createlinktoken-v5nh5hrtnq-uc.a.run.app',
+  exchangePublicToken:'https://exchangepublictoken-v5nh5hrtnq-uc.a.run.app',
+  syncBalances:       'https://syncbalances-v5nh5hrtnq-uc.a.run.app',
+};
 
 function loadPlaidScript() {
   return new Promise((resolve, reject) => {
@@ -15,13 +18,10 @@ function loadPlaidScript() {
 }
 
 export function usePlaidLink() {
-  // Open Plaid Link for a specific app account.
-  // On success, exchanges the public token server-side and stores the
-  // access token in Firestore under plaidItems/{accountId}.
   const openLink = useCallback(async (accountId, onSuccess) => {
     try {
       // 1. Get a link_token from our Cloud Function
-      const res = await fetch(`${FUNCTIONS_BASE}/createLinkToken`, { method: 'POST' });
+      const res = await fetch(FUNCTION_URLS.createLinkToken, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to get link token');
       const { link_token } = await res.json();
 
@@ -33,7 +33,7 @@ export function usePlaidLink() {
         token: link_token,
         onSuccess: async (public_token, metadata) => {
           // 4. Exchange the public token for a permanent access token (server-side)
-          const ex = await fetch(`${FUNCTIONS_BASE}/exchangePublicToken`, {
+          const ex = await fetch(FUNCTION_URLS.exchangePublicToken, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ public_token, accountId }),
@@ -55,7 +55,7 @@ export function usePlaidLink() {
 
   // Trigger a balance sync for all linked accounts
   const syncBalances = useCallback(async () => {
-    const res = await fetch(`${FUNCTIONS_BASE}/syncBalances`, { method: 'POST' });
+    const res = await fetch(FUNCTION_URLS.syncBalances, { method: 'POST' });
     if (!res.ok) throw new Error('Sync failed');
     return res.json();
   }, []);
