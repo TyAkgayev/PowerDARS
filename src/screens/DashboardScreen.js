@@ -642,9 +642,10 @@ function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
               <TouchableOpacity onPress={() => onDelete(task.id)} style={trk.delBtn}>
                 <Text style={trk.delTxt}>×</Text>
               </TouchableOpacity>
+              {/* spinner — TODO: fix animation on web
               <Animated.View style={[trk.spinnerWrap, { transform: [{ rotate: spin }] }]}>
                 <IconView icon={ICONS.spinner} size={18} />
-              </Animated.View>
+              </Animated.View> */}
             </View>
           </TouchableOpacity>
         );
