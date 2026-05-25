@@ -296,8 +296,8 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
         </TouchableOpacity>
       </Modal>
 
-      {/* Header */}
-      <View style={cal.header}>
+      {/* Header — zIndex:1 lifts the entire header (including the draggable bag) above the grid cells */}
+      <View style={[cal.header, { zIndex: 1 }]}>
         <Text style={[cal.title, isMobile && cal.titleMobile]}>{MONTHS[mo]} {yr}</Text>
         <View style={cal.headerRight}>
           {!isMobile && (
