@@ -103,10 +103,8 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
     const map = {};
     const daysInMo = new Date(yr, mo + 1, 0).getDate();
     (accounts || []).forEach(acc => {
-      (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
-        const dayVal = getLatestValue(darsHistory || {}, acc.id, field.id);
-        if (!dayVal) return;
-        const dayNum = parseInt(dayVal, 10);
+      (acc.fields || []).filter(f => f.type === 'date' && f.value).forEach(field => {
+        const dayNum = parseInt(field.value, 10);
         if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInMo) return;
         const dateStr = `${yr}-${pad(mo + 1)}-${pad(dayNum)}`;
         if (!map[dateStr]) map[dateStr] = [];
@@ -244,7 +242,7 @@ function getSparklineData(darsHistory, accountId, fieldId) {
 }
 
 function AccountRow({ acc, darsHistory, color, isMobile }) {
-  const pf = acc.fields?.[0];
+  const pf = acc.fields?.find(f => f.type === 'currency') || acc.fields?.[0];
   const val = pf ? getLatestValue(darsHistory, acc.id, pf.id) : null;
   const spark = pf ? getSparklineData(darsHistory, acc.id, pf.id) : [];
   const isNeg = val !== null && parseFloat(val) < 0;

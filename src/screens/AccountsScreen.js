@@ -93,6 +93,7 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
   };
 
   const removeField = (id) => setFields(prev => prev.filter(f => f.id !== id));
+  const updateFieldValue = (id, value) => setFields(prev => prev.map(f => f.id === id ? { ...f, value } : f));
 
   const handleSave = async () => {
     if (!name.trim()) return;
@@ -187,6 +188,21 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
                   <Text style={m.fieldName}>{field.label}</Text>
                   <Text style={m.fieldType}>{FIELD_TYPES.find(f => f.id === field.type)?.label || field.type}</Text>
                 </View>
+                {field.type === 'date' && (
+                  <TextInput
+                    style={m.dayInput}
+                    value={field.value || ''}
+                    onChangeText={v => {
+                      if (v === '') { updateFieldValue(field.id, ''); return; }
+                      const n = parseInt(v, 10);
+                      if (!isNaN(n) && n >= 1 && n <= 31) updateFieldValue(field.id, String(n));
+                    }}
+                    keyboardType="number-pad"
+                    placeholder="Day"
+                    maxLength={2}
+                    placeholderTextColor={C.faint}
+                  />
+                )}
                 <TouchableOpacity onPress={() => removeField(field.id)} style={m.fieldDel}>
                   <Text style={m.fieldDelTxt}>×</Text>
                 </TouchableOpacity>
@@ -440,6 +456,7 @@ const m = StyleSheet.create({
   fieldType: { fontSize: 12, color: C.faint, marginTop: 2 },
   fieldDel: { padding: 6 },
   fieldDelTxt: { fontSize: 20, color: C.faint },
+  dayInput: { width: 46, borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 5, fontSize: 13, textAlign: 'center', color: C.text, backgroundColor: '#FAFAFA', marginRight: 4 },
   addFieldRow: { gap: 8, marginTop: 8 },
   fieldTypeSelect: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   ftBtn: { borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
