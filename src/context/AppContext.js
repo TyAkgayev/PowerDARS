@@ -19,7 +19,7 @@ export function AppProvider({ children }) {
   const [darsHistory, setDarsHistory] = useState({});
   const [loading, setLoading] = useState(true);
   const [currentScreen, setCurrentScreen] = useState('dashboard');
-  const [userName, setUserNameState] = useState('Alex');
+  const [userName, setUserNameState] = useState('Tymur');
 
   // Accounts listener
   useEffect(() => {

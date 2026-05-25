@@ -26,6 +26,8 @@ const ACCT_TYPES = [
   { id: 'utility',      label: 'Utility',       icon: '💡' },
   { id: 'subscription', label: 'Subscription',  icon: '📱' },
   { id: 'loan',         label: 'Loan',          icon: '🏠' },
+  { id: 'car_lease',    label: 'Car Lease',     icon: '🚗' },
+  { id: 'car_insurance',label: 'Car Insurance', icon: '🛡️' },
   { id: 'other',        label: 'Other',         icon: '📄' },
 ];
 
@@ -48,6 +50,8 @@ const SUGGESTED_FIELDS = {
   utility:      [{ label: 'Amount Due', type: 'currency' }, { label: 'Due Date', type: 'date' }],
   subscription: [{ label: 'Monthly Amount', type: 'currency' }, { label: 'Next Bill Date', type: 'date' }],
   loan:         [{ label: 'Remaining Balance', type: 'currency' }, { label: 'Monthly Payment', type: 'currency' }, { label: 'Due Date', type: 'date' }],
+  car_lease:    [{ label: 'Monthly Payment', type: 'currency' }, { label: 'Due Date', type: 'date' }, { label: 'Remaining Payments', type: 'number' }, { label: 'Lease End Date', type: 'date' }],
+  car_insurance:[{ label: 'Monthly Premium', type: 'currency' }, { label: 'Due Date', type: 'date' }, { label: 'Policy Number', type: 'text' }, { label: 'Coverage End Date', type: 'date' }],
   other:        [{ label: 'Amount', type: 'currency' }],
 };
 
