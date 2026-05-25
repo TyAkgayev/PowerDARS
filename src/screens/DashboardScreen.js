@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, Image, Modal, TextInput, useWindowDimensions,
-  PanResponder, Animated,
+  PanResponder, Animated, Easing,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
 import { ICONS } from '../config/icons';
@@ -576,6 +576,14 @@ function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
 
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: true })
+    ).start();
+  }, []);
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
   const fmtDue = (dateStr) => {
     if (!dateStr) return null;
     const days = daysUntil(dateStr);
@@ -622,9 +630,6 @@ function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
         return (
           <TouchableOpacity key={task.id} style={trk.row}
             onPress={() => onToggle(task.id, task.completed)} activeOpacity={0.7}>
-            <View style={[trk.check, task.completed && trk.checkDone]}>
-              {task.completed && <Text style={trk.checkMark}>✓</Text>}
-            </View>
             <Text style={[trk.taskTitle, task.completed && trk.taskDone]} numberOfLines={1}>
               {task.title}
             </Text>
@@ -637,6 +642,9 @@ function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
               <TouchableOpacity onPress={() => onDelete(task.id)} style={trk.delBtn}>
                 <Text style={trk.delTxt}>×</Text>
               </TouchableOpacity>
+              <Animated.View style={[trk.spinnerWrap, { transform: [{ rotate: spin }] }]}>
+                <IconView icon={ICONS.spinner} size={18} />
+              </Animated.View>
             </View>
           </TouchableOpacity>
         );
@@ -888,10 +896,8 @@ const trk = StyleSheet.create({
   saveTxt: { color: '#fff', fontWeight: '600', fontSize: 14 },
   empty: { fontSize: 13, color: C.faint, textAlign: 'center', paddingVertical: 14 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', gap: 10 },
-  check: { width: 21, height: 21, borderRadius: 11, borderWidth: 2, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
-  checkDone: { borderColor: C.income, backgroundColor: C.income },
-  checkMark: { color: '#fff', fontSize: 10, fontWeight: '700' },
   taskTitle: { flex: 1, fontSize: 14, color: C.text, fontWeight: '500' },
+  spinnerWrap: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
   taskDone: { textDecorationLine: 'line-through', color: C.faint },
   dueBadge: { backgroundColor: '#EEF2FF', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 },
   dueBadgeDone: { backgroundColor: '#F3F4F6' },

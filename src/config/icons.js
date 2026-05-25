@@ -23,6 +23,9 @@ export const ICONS = {
   subscription: '📱',   // require('../../assets/icons/subscription.png')
   other:        '📄',   // require('../../assets/icons/other.png')
 
+  // ── UI elements ─────────────────────────────────────────────────────────
+  spinner:      '↻',   // require('../../assets/icons/spinner.png')
+
   // ── Bill / event categories ──────────────────────────────────────────────
   bills:        '📄',   // require('../../assets/icons/bills.png')
   income:       '💰',   // require('../../assets/icons/income.png')
