@@ -317,7 +317,7 @@ function AccountSection({ title, types, accounts, darsHistory, isMobile, footerL
   if (filtered.length === 0) return null;
 
   const total = filtered.reduce((sum, acc) => {
-    const pf = acc.fields?.[0];
+    const pf = acc.fields?.find(f => f.type === 'currency');
     if (!pf) return sum;
     const val = getLatestValue(darsHistory, acc.id, pf.id);
     if (val === null) return sum;
