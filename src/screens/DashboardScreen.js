@@ -205,94 +205,117 @@ function CalendarView({ bills, isMobile }) {
   );
 }
 
-// ─── AccountsPanel ────────────────────────────────────────────────────────────
-function AccountsPanel({ accounts, darsHistory, isMobile }) {
-  const getLatestValue = (accountId, fieldId) => {
-    const entries = Object.values(darsHistory).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    for (const e of entries) {
-      if (e.entries?.[accountId]?.[fieldId] !== undefined) return e.entries[accountId][fieldId];
-    }
-    return null;
-  };
+const BANK_TYPES = ['checking', 'savings', 'investment'];
+const DEBT_TYPES = ['credit', 'loan', 'car_lease', 'car_insurance'];
 
-  const getSparklineData = (accountId, fieldId) =>
-    Object.values(darsHistory)
-      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-      .slice(-10)
-      .map(e => e.entries?.[accountId]?.[fieldId])
-      .filter(v => v !== undefined && v !== null && v !== '');
+function getLatestValue(darsHistory, accountId, fieldId) {
+  const entries = Object.values(darsHistory).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  for (const e of entries) {
+    if (e.entries?.[accountId]?.[fieldId] !== undefined) return e.entries[accountId][fieldId];
+  }
+  return null;
+}
 
-  const BANK_TYPES = ['checking', 'savings', 'investment'];
-  const CREDIT_TYPES = ['credit', 'loan', 'car_lease', 'car_insurance'];
+function getSparklineData(darsHistory, accountId, fieldId) {
+  return Object.values(darsHistory)
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    .slice(-10)
+    .map(e => e.entries?.[accountId]?.[fieldId])
+    .filter(v => v !== undefined && v !== null && v !== '');
+}
 
-  const bankTotal = accounts.filter(a => BANK_TYPES.includes(a.type)).reduce((sum, acc) => {
+function AccountRow({ acc, darsHistory, color, isMobile }) {
+  const pf = acc.fields?.[0];
+  const val = pf ? getLatestValue(darsHistory, acc.id, pf.id) : null;
+  const spark = pf ? getSparklineData(darsHistory, acc.id, pf.id) : [];
+  const isNeg = val !== null && parseFloat(val) < 0;
+  return (
+    <View style={[pnl.row, isMobile && pnl.rowMobile]}>
+      <View style={[pnl.icon, { backgroundColor: color + '20' }]}>
+        <Text style={pnl.iconTxt}>{acc.icon || '🏦'}</Text>
+      </View>
+      <View style={pnl.info}>
+        <Text style={pnl.acctName}>{acc.name}</Text>
+        {acc.lastFour && <Text style={pnl.acctSub}>•••• {acc.lastFour}</Text>}
+        <Text style={[pnl.balance, isNeg && pnl.balanceNeg]}>
+          {val !== null ? fmtCurrency(val) : '—'}
+        </Text>
+        <Text style={pnl.balanceLabel}>{pf ? pf.label : 'Balance'}</Text>
+      </View>
+      {!isMobile && <Sparkline data={spark} color={color} width={90} height={36} />}
+    </View>
+  );
+}
+
+// ─── BanksPanel ───────────────────────────────────────────────────────────────
+function BanksPanel({ accounts, darsHistory, isMobile }) {
+  const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
+  const bankAccounts = accounts.filter(a => BANK_TYPES.includes(a.type));
+
+  const netWorth = bankAccounts.reduce((sum, acc) => {
     const pf = acc.fields?.[0];
     if (!pf) return sum;
-    const val = getLatestValue(acc.id, pf.id);
+    const val = getLatestValue(darsHistory, acc.id, pf.id);
     if (val === null) return sum;
     const n = parseFloat(val);
     return isNaN(n) ? sum : sum + n;
   }, 0);
 
-  const creditTotal = accounts.filter(a => CREDIT_TYPES.includes(a.type)).reduce((sum, acc) => {
+  if (bankAccounts.length === 0) return null;
+
+  return (
+    <View style={pnl.card}>
+      {bankAccounts.map((acc, idx) => (
+        <AccountRow
+          key={acc.id}
+          acc={acc}
+          darsHistory={darsHistory}
+          color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
+          isMobile={isMobile}
+        />
+      ))}
+      <View style={pnl.totalFooter}>
+        <Text style={pnl.nwLabel}>Net Worth</Text>
+        <Text style={pnl.nwValue}>{fmtCurrency(netWorth)}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── AccountsPanel ────────────────────────────────────────────────────────────
+function AccountsPanel({ accounts, darsHistory, isMobile }) {
+  const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
+  const debtAccounts = accounts.filter(a => !BANK_TYPES.includes(a.type));
+
+  const creditTotal = debtAccounts.filter(a => DEBT_TYPES.includes(a.type)).reduce((sum, acc) => {
     const pf = acc.fields?.[0];
     if (!pf) return sum;
-    const val = getLatestValue(acc.id, pf.id);
+    const val = getLatestValue(darsHistory, acc.id, pf.id);
     if (val === null) return sum;
     const n = parseFloat(val);
     return isNaN(n) ? sum : sum + Math.abs(n);
   }, 0);
 
-  const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
+  if (debtAccounts.length === 0) return null;
 
   return (
     <View style={pnl.card}>
       <View style={pnl.header}>
         <Text style={pnl.title}>Accounts</Text>
-        <TouchableOpacity><Text style={pnl.viewAll}>View all</Text></TouchableOpacity>
       </View>
-
-      {accounts.length === 0 ? (
-        <Text style={pnl.empty}>No accounts yet.</Text>
-      ) : (
-        accounts.map((acc, idx) => {
-          const col = acc.color || ACCT_COLORS[idx % ACCT_COLORS.length];
-          const pf = acc.fields?.[0];
-          const val = pf ? getLatestValue(acc.id, pf.id) : null;
-          const spark = pf ? getSparklineData(acc.id, pf.id) : [];
-          const isNeg = val !== null && parseFloat(val) < 0;
-          return (
-            <View key={acc.id} style={[pnl.row, isMobile && pnl.rowMobile]}>
-              <View style={[pnl.icon, { backgroundColor: col + '20' }]}>
-                <Text style={pnl.iconTxt}>{acc.icon || '🏦'}</Text>
-              </View>
-              <View style={pnl.info}>
-                <Text style={pnl.acctName}>{acc.name}</Text>
-                {acc.lastFour && <Text style={pnl.acctSub}>•••• {acc.lastFour}</Text>}
-                <Text style={[pnl.balance, isNeg && pnl.balanceNeg]}>
-                  {val !== null ? fmtCurrency(val) : '—'}
-                </Text>
-                <Text style={pnl.balanceLabel}>{pf ? pf.label : 'Balance'}</Text>
-              </View>
-              {!isMobile && <Sparkline data={spark} color={col} width={90} height={36} />}
-            </View>
-          );
-        })
-      )}
-
-      {accounts.length > 0 && (
-        <View style={pnl.totalsRow}>
-          <View style={pnl.totalBox}>
-            <Text style={pnl.nwLabel}>Bank Total</Text>
-            <Text style={pnl.nwValue}>{fmtCurrency(bankTotal)}</Text>
-          </View>
-          <View style={pnl.totalDivider} />
-          <View style={pnl.totalBox}>
-            <Text style={pnl.nwLabel}>Total Credit</Text>
-            <Text style={[pnl.nwValue, { color: C.bills }]}>{fmtCurrency(creditTotal)}</Text>
-          </View>
-        </View>
-      )}
+      {debtAccounts.map((acc, idx) => (
+        <AccountRow
+          key={acc.id}
+          acc={acc}
+          darsHistory={darsHistory}
+          color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
+          isMobile={isMobile}
+        />
+      ))}
+      <View style={pnl.totalFooter}>
+        <Text style={pnl.nwLabel}>Total Credit</Text>
+        <Text style={[pnl.nwValue, { color: C.bills }]}>{fmtCurrency(creditTotal)}</Text>
+      </View>
     </View>
   );
 }
@@ -507,21 +530,23 @@ export default function DashboardScreen() {
 
       {/* Body — row on desktop, column on mobile */}
       {isMobile ? (
-        // ── Mobile: single column ──
+        // ── Mobile: Calendar → Banks → Tasks → Accounts → Upcoming ──
         <View style={s.colStack}>
-          <CalendarView bills={bills}  isMobile={true} />
+          <CalendarView bills={bills} isMobile={true} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
+          <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <AccountsPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <UpcomingBills bills={bills} />
-          <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
         </View>
       ) : (
         // ── Desktop: two-column ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills}  isMobile={false} />
+            <CalendarView bills={bills} isMobile={false} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
+            <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
             <AccountsPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
             <UpcomingBills bills={bills} />
           </View>
@@ -603,9 +628,7 @@ const pnl = StyleSheet.create({
   balance: { fontSize: 18, fontWeight: '700', color: C.text, marginTop: 3 },
   balanceNeg: { color: C.bills },
   balanceLabel: { fontSize: 11, color: C.faint },
-  totalsRow: { flexDirection: 'row', paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6', marginTop: 4 },
-  totalBox: { flex: 1 },
-  totalDivider: { width: 1, backgroundColor: '#F3F4F6', marginHorizontal: 12 },
+  totalFooter: { paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6', marginTop: 4 },
   nwLabel: { fontSize: 12, color: C.muted, fontWeight: '500' },
   nwValue: { fontSize: 18, fontWeight: '700', color: C.text, marginTop: 3 },
 });
