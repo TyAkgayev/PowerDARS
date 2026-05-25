@@ -312,12 +312,12 @@ export default function AccountsScreen() {
   return (
     <ScrollView style={sc.screen} contentContainerStyle={[sc.content, isMobile && sc.contentMobile]}>
       {/* Header */}
-      <View style={sc.header}>
+      <View style={[sc.header, isMobile && sc.headerMobile]}>
         <View>
           <Text style={sc.title}>Accounts</Text>
           <Text style={sc.subtitle}>Manage your tracked accounts and their fields</Text>
         </View>
-        <TouchableOpacity style={sc.addBtn} onPress={() => setShowAdd(true)}>
+        <TouchableOpacity style={[sc.addBtn, isMobile && sc.addBtnMobile]} onPress={() => setShowAdd(true)}>
           <Text style={sc.addTxt}>+ Add Account</Text>
         </TouchableOpacity>
       </View>
@@ -375,9 +375,11 @@ const sc = StyleSheet.create({
   content: { padding: 28, paddingBottom: 60 },
   contentMobile: { padding: 16, paddingBottom: 100 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 },
+  headerMobile: { flexDirection: 'column', gap: 12 },
   title: { fontSize: 28, fontWeight: '800', color: C.text },
   subtitle: { fontSize: 14, color: C.muted, marginTop: 4 },
-  addBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 20 },
+  addBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 20, alignSelf: 'flex-start' },
+  addBtnMobile: { alignSelf: 'stretch', alignItems: 'center' },
   addTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
   empty: { alignItems: 'center', paddingVertical: 80 },
   emptyIcon: { fontSize: 56, marginBottom: 16 },
