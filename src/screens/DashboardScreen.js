@@ -79,6 +79,9 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   const today = new Date();
   const [yr, setYr] = useState(today.getFullYear());
   const [mo, setMo] = useState(today.getMonth());
+  const [projectedIncome, setProjectedIncome] = useState({});
+  const [incomeModal, setIncomeModal] = useState(null);
+  const [incomeInput, setIncomeInput] = useState('');
 
   const daysInMonth = new Date(yr, mo + 1, 0).getDate();
   const firstDay    = new Date(yr, mo, 1).getDay();
@@ -103,11 +106,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
     const parseDayNum = (val) => {
       if (!val) return NaN;
       const s = String(val);
-      // YYYY-MM-DD → extract the DD part
-      if (s.includes('-')) {
-        const parts = s.split('-');
-        return parseInt(parts[parts.length - 1], 10);
-      }
+      if (s.includes('-')) { const parts = s.split('-'); return parseInt(parts[parts.length - 1], 10); }
       return parseInt(s, 10);
     };
     const map = {};
@@ -129,13 +128,87 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
     return map;
   }, [accounts, darsHistory, yr, mo]);
 
+  // ── Financial projection ──────────────────────────────────────────────────
+  const projection = useMemo(() => {
+    const bankAccts = (accounts || []).filter(a => BANK_TYPES.includes(a.type));
+    const startBalance = bankAccts.reduce((sum, acc) => {
+      const pf = acc.fields?.find(f => f.type === 'currency');
+      if (!pf) return sum;
+      return sum + (parseFloat(getLatestValue(darsHistory || {}, acc.id, pf.id)) || 0);
+    }, 0);
+    if (bankAccts.length === 0) return {};
+
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const moStart = new Date(yr, mo, 1);
+    const projFrom = moStart > now ? moStart : now;
+    const daysInMo = new Date(yr, mo + 1, 0).getDate();
+
+    let balance = startBalance;
+    const result = {};
+
+    for (let d = 1; d <= daysInMo; d++) {
+      const dateStr = `${yr}-${pad(mo + 1)}-${pad(d)}`;
+      const date = new Date(yr, mo, d); date.setHours(0, 0, 0, 0);
+      if (date < projFrom) continue;
+
+      balance += parseFloat(projectedIncome[dateStr]) || 0;
+
+      const events = [
+        ...(billsByDate[dateStr] || []),
+        ...(accountEventsByDate[dateStr] || []),
+      ];
+      const insufficient = new Set();
+      for (const ev of events) {
+        const amt = Math.abs(parseFloat(ev.amount) || 0);
+        if (ev.category === 'income') { balance += amt; }
+        else { if (balance < amt) insufficient.add(ev.id); balance -= amt; }
+      }
+      result[dateStr] = { balance, insufficient };
+    }
+    return result;
+  }, [accounts, darsHistory, billsByDate, accountEventsByDate, projectedIncome, yr, mo]);
+
   const goBack = () => { if (mo === 0) { setMo(11); setYr(y => y-1); } else setMo(m => m-1); };
   const goFwd  = () => { if (mo === 11) { setMo(0); setYr(y => y+1); } else setMo(m => m+1); };
 
   const dayHeaders = isMobile ? DAYS_SHORT : DAYS_FULL;
 
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+
+  const handleAddIncome = () => {
+    const amt = parseFloat(incomeInput);
+    if (!isNaN(amt) && amt > 0) {
+      setProjectedIncome(prev => ({ ...prev, [incomeModal]: amt }));
+    } else {
+      setProjectedIncome(prev => { const n = { ...prev }; delete n[incomeModal]; return n; });
+    }
+    setIncomeModal(null); setIncomeInput('');
+  };
+
   return (
     <View style={cal.card}>
+      {/* Income injection modal */}
+      <Modal visible={incomeModal !== null} transparent animationType="fade"
+        onRequestClose={() => { setIncomeModal(null); setIncomeInput(''); }}>
+        <TouchableOpacity style={cal.incOverlay} activeOpacity={1}
+          onPress={() => { setIncomeModal(null); setIncomeInput(''); }}>
+          <View style={cal.incBox}>
+            <Text style={cal.incTitle}>Projected Income</Text>
+            <Text style={cal.incDate}>{incomeModal}</Text>
+            <TextInput style={cal.incInput} value={incomeInput} onChangeText={setIncomeInput}
+              keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={C.faint} autoFocus />
+            <View style={cal.incBtns}>
+              <TouchableOpacity style={cal.incCancel} onPress={() => { setIncomeModal(null); setIncomeInput(''); }}>
+                <Text style={cal.incCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={cal.incSave} onPress={handleAddIncome}>
+                <Text style={cal.incSaveTxt}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Header */}
       <View style={cal.header}>
         <Text style={[cal.title, isMobile && cal.titleMobile]}>{MONTHS[mo]} {yr}</Text>
@@ -145,21 +218,15 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
               <Text style={cal.todayTxt}>Today</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={cal.navBtn} onPress={goBack}>
-            <Text style={cal.navTxt}>‹</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={cal.navBtn} onPress={goFwd}>
-            <Text style={cal.navTxt}>›</Text>
-          </TouchableOpacity>
+          <TouchableOpacity style={cal.navBtn} onPress={goBack}><Text style={cal.navTxt}>‹</Text></TouchableOpacity>
+          <TouchableOpacity style={cal.navBtn} onPress={goFwd}><Text style={cal.navTxt}>›</Text></TouchableOpacity>
         </View>
       </View>
 
       {/* Day headers */}
       <View style={cal.dayRow}>
         {dayHeaders.map((d, i) => (
-          <View key={i} style={cal.dayHead}>
-            <Text style={cal.dayHeadTxt}>{d}</Text>
-          </View>
+          <View key={i} style={cal.dayHead}><Text style={cal.dayHeadTxt}>{d}</Text></View>
         ))}
       </View>
 
@@ -167,53 +234,68 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
       {Array.from({ length: 6 }, (_, wi) => (
         <View key={wi} style={cal.week}>
           {cells.slice(wi * 7, wi * 7 + 7).map((cell, di) => {
-            const isToday = cell.cur &&
-              cell.day === today.getDate() &&
-              mo === today.getMonth() &&
-              yr === today.getFullYear();
+            const isToday = cell.cur && cell.day === today.getDate() && mo === today.getMonth() && yr === today.getFullYear();
             const events = cell.str ? [...(billsByDate[cell.str] || []), ...(accountEventsByDate[cell.str] || [])] : [];
+            const proj = cell.str ? projection[cell.str] : null;
+            const incAmt = cell.str ? (projectedIncome[cell.str] || 0) : 0;
+            const cellDate = cell.str ? new Date(cell.str + 'T00:00:00') : null;
+            const isFuture = cell.cur && cellDate && cellDate >= now;
 
             return (
-              <View key={di} style={[
-                cal.cell,
-                isMobile && cal.cellMobile,
-                isToday && cal.cellToday,
-              ]}>
+              <View key={di} style={[cal.cell, isMobile && cal.cellMobile, isToday && cal.cellToday]}>
+                {/* Day number row + projected end-of-day balance */}
                 <View style={cal.dayNum}>
-                  <Text style={[
-                    cal.dayTxt,
-                    isMobile && cal.dayTxtMobile,
-                    !cell.cur && cal.dayMuted,
-                    isToday && cal.dayTxtToday,
-                  ]}>
+                  <Text style={[cal.dayTxt, isMobile && cal.dayTxtMobile, !cell.cur && cal.dayMuted, isToday && cal.dayTxtToday]}>
                     {cell.day}
                   </Text>
                   {isToday && <View style={cal.dot} />}
+                  {!isMobile && proj && (
+                    <Text style={[cal.projBal, { color: proj.balance >= 0 ? C.income : C.bills }]}>
+                      {proj.balance < 0 ? '-' : ''}${Math.abs(proj.balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    </Text>
+                  )}
                 </View>
 
-                {/* Desktop: full chips */}
-                {!isMobile && events.slice(0, 2).map((ev, ei) => {
-                  const col = CAT_COLOR[ev.category] || C.other;
-                  const sign = ev.category === 'income' ? '+' : '-';
-                  return (
-                    <View key={ei} style={[cal.chip, { backgroundColor: col + '20' }]}>
-                      <Text style={[cal.chipName, { color: col }]} numberOfLines={1}>{ev.name}</Text>
-                      <Text style={[cal.chipAmt, { color: col }]}>{sign}${Math.abs(ev.amount)}</Text>
-                    </View>
+                {/* Desktop chips */}
+                {!isMobile && (() => {
+                  const rows = [];
+                  if (incAmt > 0) rows.push(
+                    <TouchableOpacity key="inc" style={[cal.chip, { backgroundColor: C.income + '22' }]}
+                      onPress={() => { setIncomeInput(String(incAmt)); setIncomeModal(cell.str); }}>
+                      <Text style={[cal.chipName, { color: C.income }]} numberOfLines={1}>💰 Income</Text>
+                      <Text style={[cal.chipAmt, { color: C.income }]}>+${incAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
+                    </TouchableOpacity>
                   );
-                })}
-                {!isMobile && events.length > 2 && (
-                  <Text style={cal.overflow}>+{events.length - 2}</Text>
-                )}
+                  events.slice(0, 3 - (incAmt > 0 ? 1 : 0)).forEach((ev, ei) => {
+                    const insuf = proj?.insufficient?.has(ev.id);
+                    const col = insuf ? C.bills : (CAT_COLOR[ev.category] || C.other);
+                    const sign = ev.category === 'income' ? '+' : '-';
+                    rows.push(
+                      <View key={ei} style={[cal.chip, { backgroundColor: col + '22' }, insuf && cal.chipInsuf]}>
+                        {insuf && <Text style={cal.warnTxt}>⚠ </Text>}
+                        <Text style={[cal.chipName, { color: col }]} numberOfLines={1}>{ev.name}</Text>
+                        <Text style={[cal.chipAmt, { color: col }]}>{sign}${Math.abs(ev.amount).toFixed(0)}</Text>
+                      </View>
+                    );
+                  });
+                  const overflow = events.length - (3 - (incAmt > 0 ? 1 : 0));
+                  if (overflow > 0) rows.push(<Text key="ov" style={cal.overflow}>+{overflow} more</Text>);
+                  if (isFuture) rows.push(
+                    <TouchableOpacity key="addinc" style={cal.addIncBtn}
+                      onPress={() => { setIncomeInput(incAmt ? String(incAmt) : ''); setIncomeModal(cell.str); }}>
+                      <Text style={cal.addIncTxt}>💰 + income</Text>
+                    </TouchableOpacity>
+                  );
+                  return rows;
+                })()}
 
-                {/* Mobile: colored dots only */}
+                {/* Mobile: dots */}
                 {isMobile && events.length > 0 && (
                   <View style={cal.dotRow}>
                     {events.slice(0, 3).map((ev, ei) => (
-                      <View
-                        key={ei}
-                        style={[cal.eventDot, { backgroundColor: CAT_COLOR[ev.category] || C.other }]}
-                      />
+                      <View key={ei} style={[cal.eventDot, {
+                        backgroundColor: proj?.insufficient?.has(ev.id) ? C.bills : (CAT_COLOR[ev.category] || C.other)
+                      }]} />
                     ))}
                   </View>
                 )}
@@ -231,6 +313,10 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
             <Text style={cal.legendTxt}>{cat.charAt(0).toUpperCase() + cat.slice(1)}</Text>
           </View>
         ))}
+        <View style={cal.legendItem}>
+          <View style={[cal.legendDot, { backgroundColor: C.bills, borderWidth: 1, borderColor: C.bills }]} />
+          <Text style={cal.legendTxt}>⚠ Insufficient</Text>
+        </View>
       </View>
     </View>
   );
@@ -629,8 +715,8 @@ const cal = StyleSheet.create({
   dayHead: { flex: 1, alignItems: 'center', paddingVertical: 5 },
   dayHeadTxt: { fontSize: 10, fontWeight: '600', color: C.faint, letterSpacing: 0.4 },
   week: { flexDirection: 'row' },
-  cell: { flex: 1, minHeight: 78, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 5, paddingHorizontal: 3, paddingBottom: 4 },
-  cellMobile: { minHeight: 46 },
+  cell: { flex: 1, minHeight: 114, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 5, paddingHorizontal: 3, paddingBottom: 4 },
+  cellMobile: { minHeight: 48 },
   cellToday: { borderTopWidth: 2, borderTopColor: C.primary },
   dayNum: { flexDirection: 'row', alignItems: 'center', marginBottom: 3 },
   dayTxt: { fontSize: 12, fontWeight: '500', color: C.text },
@@ -642,6 +728,21 @@ const cal = StyleSheet.create({
   chipName: { fontSize: 10, fontWeight: '600', lineHeight: 13 },
   chipAmt: { fontSize: 10, fontWeight: '500', lineHeight: 13 },
   overflow: { fontSize: 9, color: C.faint },
+  projBal: { marginLeft: 'auto', fontSize: 9, fontWeight: '700' },
+  chipInsuf: { borderWidth: 1, borderColor: C.bills },
+  warnTxt: { fontSize: 8, color: C.bills },
+  addIncBtn: { marginTop: 'auto', paddingTop: 2 },
+  addIncTxt: { fontSize: 8, color: C.income, fontWeight: '600' },
+  incOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  incBox: { backgroundColor: '#fff', borderRadius: 16, padding: 20, width: 280, shadowColor: '#000', shadowOffset: {width:0,height:4}, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 },
+  incTitle: { fontSize: 16, fontWeight: '700', color: C.text, marginBottom: 2 },
+  incDate: { fontSize: 12, color: C.muted, marginBottom: 12 },
+  incInput: { borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16, color: C.text, backgroundColor: '#FAFAFA' },
+  incBtns: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  incCancel: { flex: 1, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  incCancelTxt: { fontSize: 14, color: C.muted, fontWeight: '500' },
+  incSave: { flex: 1, backgroundColor: C.income, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  incSaveTxt: { fontSize: 14, color: '#fff', fontWeight: '700' },
   dotRow: { flexDirection: 'row', gap: 2, marginTop: 2 },
   eventDot: { width: 5, height: 5, borderRadius: 3 },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
