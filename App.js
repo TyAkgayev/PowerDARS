@@ -1,20 +1,89 @@
+import React from 'react';
+import { View, Text, ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { AppProvider, useApp } from './src/context/AppContext';
+import Sidebar from './src/components/Sidebar';
+import BottomTabBar from './src/components/BottomTabBar';
+import DashboardScreen from './src/screens/DashboardScreen';
+import DARSScreen from './src/screens/DARSScreen';
+import AccountsScreen from './src/screens/AccountsScreen';
 
-export default function App() {
+function MainApp() {
+  const { currentScreen, setCurrentScreen, loading } = useApp();
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
+
+  if (loading) {
+    return (
+      <View style={styles.loading}>
+        <Text style={styles.logoLine}>
+          <Text style={styles.logoBlack}>Power</Text>
+          <Text style={styles.logoBlue}>DARS</Text>
+        </Text>
+        <ActivityIndicator size="large" color="#4361EE" style={{ marginTop: 20 }} />
+      </View>
+    );
+  }
+
+  const renderScreen = () => {
+    switch (currentScreen) {
+      case 'dars':     return <DARSScreen />;
+      case 'accounts': return <AccountsScreen />;
+      default:         return <DashboardScreen />;
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
+    <View style={[styles.app, isMobile && styles.appMobile]}>
+      <StatusBar style="dark" />
+
+      {/* Desktop: sidebar on the left */}
+      {!isMobile && (
+        <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
+      )}
+
+      {/* Main content */}
+      <View style={styles.main}>
+        {renderScreen()}
+      </View>
+
+      {/* Mobile: bottom tab bar */}
+      {isMobile && (
+        <BottomTabBar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
+      )}
     </View>
   );
 }
 
+export default function App() {
+  return (
+    <AppProvider>
+      <MainApp />
+    </AppProvider>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
+  app: {
     flex: 1,
-    backgroundColor: '#fff',
+    flexDirection: 'row',
+    backgroundColor: '#F0F4FF',
+    height: '100%',
+  },
+  appMobile: {
+    flexDirection: 'column',
+  },
+  main: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  loading: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#F0F4FF',
   },
+  logoLine: { fontSize: 32, fontWeight: '800' },
+  logoBlack: { color: '#1F2937' },
+  logoBlue: { color: '#4361EE' },
 });
