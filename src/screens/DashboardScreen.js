@@ -103,6 +103,9 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   const bagResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponderCapture: () => true,
+    onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => {
       dragAnim.setValue({ x: 0, y: 0 });
       setIsDragging(true);
@@ -695,7 +698,7 @@ export default function DashboardScreen() {
   const pad = isMobile ? 16 : 28;
 
   return (
-    <ScrollView style={s.screen} contentContainerStyle={[s.content, { padding: pad, paddingBottom: 48 }]}>
+    <ScrollView style={[s.screen, { userSelect: 'none' }]} contentContainerStyle={[s.content, { padding: pad, paddingBottom: 48 }]}>
       {/* Header */}
       <View style={[s.header, isMobile && s.headerMobile]}>
         <View style={{ flex: 1 }}>
