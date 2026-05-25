@@ -74,7 +74,7 @@ function Sparkline({ data = [], color = '#4361EE', width = 90, height = 36 }) {
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
-function CalendarView({ bills, onAddBill, isMobile }) {
+function CalendarView({ bills, isMobile }) {
   const today = new Date();
   const [yr, setYr] = useState(today.getFullYear());
   const [mo, setMo] = useState(today.getMonth());
@@ -119,9 +119,6 @@ function CalendarView({ bills, onAddBill, isMobile }) {
           </TouchableOpacity>
           <TouchableOpacity style={cal.navBtn} onPress={goFwd}>
             <Text style={cal.navTxt}>›</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={cal.addBtn} onPress={onAddBill}>
-            <Text style={cal.addTxt}>{isMobile ? '+' : '+ Add'}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -225,14 +222,25 @@ function AccountsPanel({ accounts, darsHistory, isMobile }) {
       .map(e => e.entries?.[accountId]?.[fieldId])
       .filter(v => v !== undefined && v !== null && v !== '');
 
-  const netWorth = accounts.reduce((sum, acc) => {
+  const BANK_TYPES = ['checking', 'savings', 'investment'];
+  const CREDIT_TYPES = ['credit', 'loan', 'car_lease', 'car_insurance'];
+
+  const bankTotal = accounts.filter(a => BANK_TYPES.includes(a.type)).reduce((sum, acc) => {
     const pf = acc.fields?.[0];
     if (!pf) return sum;
     const val = getLatestValue(acc.id, pf.id);
     if (val === null) return sum;
     const n = parseFloat(val);
-    if (isNaN(n)) return sum;
-    return acc.type === 'credit' ? sum - Math.abs(n) : sum + n;
+    return isNaN(n) ? sum : sum + n;
+  }, 0);
+
+  const creditTotal = accounts.filter(a => CREDIT_TYPES.includes(a.type)).reduce((sum, acc) => {
+    const pf = acc.fields?.[0];
+    if (!pf) return sum;
+    const val = getLatestValue(acc.id, pf.id);
+    if (val === null) return sum;
+    const n = parseFloat(val);
+    return isNaN(n) ? sum : sum + Math.abs(n);
   }, 0);
 
   const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
@@ -273,9 +281,16 @@ function AccountsPanel({ accounts, darsHistory, isMobile }) {
       )}
 
       {accounts.length > 0 && (
-        <View style={pnl.netWorth}>
-          <Text style={pnl.nwLabel}>Total Net Worth</Text>
-          <Text style={pnl.nwValue}>{fmtCurrency(netWorth)}</Text>
+        <View style={pnl.totalsRow}>
+          <View style={pnl.totalBox}>
+            <Text style={pnl.nwLabel}>Bank Total</Text>
+            <Text style={pnl.nwValue}>{fmtCurrency(bankTotal)}</Text>
+          </View>
+          <View style={pnl.totalDivider} />
+          <View style={pnl.totalBox}>
+            <Text style={pnl.nwLabel}>Total Credit</Text>
+            <Text style={[pnl.nwValue, { color: C.bills }]}>{fmtCurrency(creditTotal)}</Text>
+          </View>
         </View>
       )}
     </View>
@@ -466,10 +481,9 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addBill, addTask, toggleTask, deleteTask, userName } = useApp();
+  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
-  const [showAddBill, setShowAddBill] = useState(false);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -495,7 +509,7 @@ export default function DashboardScreen() {
       {isMobile ? (
         // ── Mobile: single column ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} onAddBill={() => setShowAddBill(true)} isMobile={true} />
+          <CalendarView bills={bills}  isMobile={true} />
           <AccountsPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <UpcomingBills bills={bills} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
@@ -504,7 +518,7 @@ export default function DashboardScreen() {
         // ── Desktop: two-column ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} onAddBill={() => setShowAddBill(true)} isMobile={false} />
+            <CalendarView bills={bills}  isMobile={false} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
@@ -514,12 +528,6 @@ export default function DashboardScreen() {
         </View>
       )}
 
-      <AddBillModal
-        visible={showAddBill}
-        onClose={() => setShowAddBill(false)}
-        onSave={addBill}
-        isMobile={isMobile}
-      />
     </ScrollView>
   );
 }
@@ -595,9 +603,11 @@ const pnl = StyleSheet.create({
   balance: { fontSize: 18, fontWeight: '700', color: C.text, marginTop: 3 },
   balanceNeg: { color: C.bills },
   balanceLabel: { fontSize: 11, color: C.faint },
-  netWorth: { paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6', marginTop: 4 },
+  totalsRow: { flexDirection: 'row', paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6', marginTop: 4 },
+  totalBox: { flex: 1 },
+  totalDivider: { width: 1, backgroundColor: '#F3F4F6', marginHorizontal: 12 },
   nwLabel: { fontSize: 12, color: C.muted, fontWeight: '500' },
-  nwValue: { fontSize: 20, fontWeight: '700', color: C.text, marginTop: 3 },
+  nwValue: { fontSize: 18, fontWeight: '700', color: C.text, marginTop: 3 },
 });
 
 const up = StyleSheet.create({
