@@ -100,11 +100,22 @@ function CalendarView({ bills, accounts, darsHistory, isMobile }) {
   }, [bills]);
 
   const accountEventsByDate = useMemo(() => {
+    const parseDayNum = (val) => {
+      if (!val) return NaN;
+      const s = String(val);
+      // YYYY-MM-DD → extract the DD part
+      if (s.includes('-')) {
+        const parts = s.split('-');
+        return parseInt(parts[parts.length - 1], 10);
+      }
+      return parseInt(s, 10);
+    };
     const map = {};
     const daysInMo = new Date(yr, mo + 1, 0).getDate();
     (accounts || []).forEach(acc => {
-      (acc.fields || []).filter(f => f.type === 'date' && f.value).forEach(field => {
-        const dayNum = parseInt(field.value, 10);
+      (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
+        const raw = field.value || getLatestValue(darsHistory || {}, acc.id, field.id);
+        const dayNum = parseDayNum(raw);
         if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInMo) return;
         const dateStr = `${yr}-${pad(mo + 1)}-${pad(dayNum)}`;
         if (!map[dateStr]) map[dateStr] = [];
