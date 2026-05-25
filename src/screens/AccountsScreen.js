@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useApp } from '../context/AppContext';
 import { ICONS } from '../config/icons';
+import { usePlaidLink } from '../hooks/usePlaidLink';
 
 const C = {
   primary: '#4361EE',
@@ -262,7 +263,8 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
 }
 
 // ─── Account Card ─────────────────────────────────────────────────────────────
-function AccountCard({ account, onEdit, onDelete, color, isMobile }) {
+function AccountCard({ account, onEdit, onDelete, onLinkBank, color, isMobile }) {
+  const isLinked = !!account.plaidLinked;
   return (
     <View style={[c.card, isMobile && c.cardMobile]}>
       <View style={c.left}>
@@ -270,7 +272,14 @@ function AccountCard({ account, onEdit, onDelete, color, isMobile }) {
           <Text style={c.iconTxt}>{account.icon || '🏦'}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={c.name}>{account.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={c.name}>{account.name}</Text>
+            {isLinked && (
+              <View style={c.linkedBadge}>
+                <Text style={c.linkedBadgeTxt}>🔗 Linked</Text>
+              </View>
+            )}
+          </View>
           <Text style={c.type}>
             {ACCT_TYPES.find(t => t.id === account.type)?.label || account.type}
             {account.lastFour ? ` •••• ${account.lastFour}` : ''}
@@ -287,6 +296,9 @@ function AccountCard({ account, onEdit, onDelete, color, isMobile }) {
         </View>
       </View>
       <View style={[c.actions, isMobile && c.actionsMobile]}>
+        <TouchableOpacity style={c.linkBtn} onPress={onLinkBank}>
+          <Text style={c.linkTxt}>{isLinked ? '🔄 Re-link' : '🏦 Link Bank'}</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={c.editBtn} onPress={onEdit}>
           <Text style={c.editTxt}>Edit</Text>
         </TouchableOpacity>
@@ -301,10 +313,12 @@ function AccountCard({ account, onEdit, onDelete, color, isMobile }) {
 // ─── AccountsScreen ───────────────────────────────────────────────────────────
 export default function AccountsScreen() {
   const { accounts, addAccount, updateAccount, deleteAccount } = useApp();
+  const { openLink, syncBalances } = usePlaidLink();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const [showAdd, setShowAdd] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
+  const [syncing, setSyncing] = useState(false);
 
   const handleAdd = async (data) => {
     await addAccount(data);
@@ -328,6 +342,25 @@ export default function AccountsScreen() {
     );
   };
 
+  const handleLinkBank = (account) => {
+    openLink(account.id, async () => {
+      await updateAccount(account.id, { plaidLinked: true });
+      Alert.alert('Bank Linked', `${account.name} is now connected. Tap "Sync Balances" to pull live data.`);
+    });
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const result = await syncBalances();
+      Alert.alert('Synced', `Updated balances for ${result.synced} account(s).`);
+    } catch {
+      Alert.alert('Sync Failed', 'Could not reach the server. Make sure Cloud Functions are deployed.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <ScrollView style={sc.screen} contentContainerStyle={[sc.content, isMobile && sc.contentMobile]}>
       {/* Header */}
@@ -336,9 +369,14 @@ export default function AccountsScreen() {
           <Text style={sc.title}>Accounts</Text>
           <Text style={sc.subtitle}>Manage your tracked accounts and their fields</Text>
         </View>
-        <TouchableOpacity style={[sc.addBtn, isMobile && sc.addBtnMobile]} onPress={() => setShowAdd(true)}>
-          <Text style={sc.addTxt}>+ Add Account</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity style={sc.syncBtn} onPress={handleSync} disabled={syncing}>
+            <Text style={sc.syncTxt}>{syncing ? 'Syncing…' : '🔄 Sync Balances'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[sc.addBtn, isMobile && sc.addBtnMobile]} onPress={() => setShowAdd(true)}>
+            <Text style={sc.addTxt}>+ Add Account</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Empty state */}
@@ -363,6 +401,7 @@ export default function AccountsScreen() {
           color={account.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
           onEdit={() => setEditingAccount(account)}
           onDelete={() => handleDelete(account)}
+          onLinkBank={() => handleLinkBank(account)}
           isMobile={isMobile}
         />
       ))}
@@ -400,6 +439,8 @@ const sc = StyleSheet.create({
   addBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 20, alignSelf: 'flex-start' },
   addBtnMobile: { alignSelf: 'stretch', alignItems: 'center' },
   addTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  syncBtn: { borderWidth: 1, borderColor: C.primary, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignSelf: 'flex-start' },
+  syncTxt: { color: C.primary, fontWeight: '600', fontSize: 14 },
   empty: { alignItems: 'center', paddingVertical: 80 },
   emptyIcon: { fontSize: 56, marginBottom: 16 },
   emptyTitle: { fontSize: 24, fontWeight: '700', color: C.text, marginBottom: 8 },
@@ -425,6 +466,10 @@ const c = StyleSheet.create({
   fieldChipTxt: { fontSize: 12, fontWeight: '500' },
   actions: { flexDirection: 'row', gap: 8 },
   actionsMobile: { width: '100%', justifyContent: 'flex-end' },
+  linkBtn: { borderWidth: 1, borderColor: '#22C55E', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: '#F0FDF4' },
+  linkTxt: { fontSize: 13, color: '#16A34A', fontWeight: '600' },
+  linkedBadge: { backgroundColor: '#DCFCE7', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
+  linkedBadgeTxt: { fontSize: 11, color: '#16A34A', fontWeight: '600' },
   editBtn: { borderWidth: 1, borderColor: C.primary, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7 },
   editTxt: { fontSize: 13, color: C.primary, fontWeight: '600' },
   delBtn: { borderWidth: 1, borderColor: '#FEE2E2', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#FEF2F2' },
