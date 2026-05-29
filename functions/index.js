@@ -1,3 +1,4 @@
+// v2
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
@@ -10,8 +11,8 @@ const db = admin.firestore();
 const PLAID_CLIENT_ID = defineSecret('PLAID_CLIENT_ID');
 const PLAID_SECRET    = defineSecret('PLAID_SECRET');
 
-// Plaid environment: 'sandbox' for testing, 'production' for real banks
-const PLAID_ENV = 'sandbox';
+// Plaid environment: 'sandbox' | 'development' | 'production'
+const PLAID_ENV = 'development';
 
 function getPlaidClient(clientId, secret) {
   return new PlaidApi(new Configuration({

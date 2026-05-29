@@ -21,6 +21,9 @@ export function AppProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [currentScreen, setCurrentScreen] = useState('dashboard');
   const [userName, setUserNameState] = useState('Tymur');
+  const [cars, setCars] = useState([]);
+  const [driverProfile, setDriverProfile] = useState({ points: '', tickets: '', courts: '' });
+  const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
 
   // Accounts listener
   useEffect(() => {
@@ -80,6 +83,31 @@ export function AppProvider({ children }) {
     return unsub;
   }, []);
 
+  // Cars listener
+  useEffect(() => {
+    const q = query(collection(db, 'cars'), orderBy('order', 'asc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setCars(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, []);
+
+  // Driver profile listener
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'driverProfile'), (snap) => {
+      if (snap.exists()) setDriverProfile(snap.data());
+    });
+    return unsub;
+  }, []);
+
+  // RN profile listener
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'rnProfile'), (snap) => {
+      if (snap.exists()) setRNProfile(snap.data());
+    });
+    return unsub;
+  }, []);
+
   // — Accounts —
   const addAccount = useCallback(async (data) => {
     await addDoc(collection(db, 'accounts'), {
@@ -127,6 +155,27 @@ export function AppProvider({ children }) {
     await deleteDoc(doc(db, 'tasks', id));
   }, []);
 
+  // — Cars —
+  const addCar = useCallback(async (data) => {
+    await addDoc(collection(db, 'cars'), { ...data, order: cars.length, createdAt: serverTimestamp() });
+  }, [cars.length]);
+
+  const updateCar = useCallback(async (id, updates) => {
+    await updateDoc(doc(db, 'cars', id), updates);
+  }, []);
+
+  const deleteCar = useCallback(async (id) => {
+    await deleteDoc(doc(db, 'cars', id));
+  }, []);
+
+  const saveDriverProfile = useCallback(async (data) => {
+    await setDoc(doc(db, 'settings', 'driverProfile'), data, { merge: true });
+  }, []);
+
+  const saveRNProfile = useCallback(async (data) => {
+    await setDoc(doc(db, 'settings', 'rnProfile'), data, { merge: true });
+  }, []);
+
   // — DARS —
   const saveDars = useCallback(async (entries) => {
     const date = todayStr();
@@ -159,6 +208,9 @@ export function AppProvider({ children }) {
       addBill, updateBill, deleteBill,
       addTask, toggleTask, deleteTask,
       saveDars, getTodaysDars,
+      cars, addCar, updateCar, deleteCar,
+      driverProfile, saveDriverProfile,
+      rnProfile, saveRNProfile,
     }}>
       {children}
     </AppContext.Provider>
