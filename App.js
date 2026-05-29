@@ -9,11 +9,25 @@ import DARSScreen from './src/screens/DARSScreen';
 import AccountsScreen from './src/screens/AccountsScreen';
 import CarScreen from './src/screens/CarScreen';
 import RNScreen from './src/screens/RNScreen';
+import { usePlaidLink } from './src/hooks/usePlaidLink';
 
 function MainApp() {
   const { currentScreen, setCurrentScreen, loading } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+  const { isOAuthReturn, completeOAuthReturn } = usePlaidLink();
+
+  useEffect(() => {
+    if (isOAuthReturn) {
+      completeOAuthReturn(() => {
+        // Clean up the oauth_state_id from the URL without reloading
+        if (typeof window !== 'undefined') {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+        setCurrentScreen('accounts');
+      });
+    }
+  }, []);
 
   if (loading) {
     return (
