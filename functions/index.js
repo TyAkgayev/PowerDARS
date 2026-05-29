@@ -37,7 +37,7 @@ exports.createLinkToken = onRequest(
         const response = await plaid.linkTokenCreate({
           user: { client_user_id: 'powerdars-user' },
           client_name: 'PowerDARS',
-          products: ['auth', 'transactions'],
+          products: ['auth'],
           country_codes: ['US'],
           language: 'en',
         });
