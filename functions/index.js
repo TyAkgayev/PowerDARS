@@ -34,12 +34,14 @@ exports.createLinkToken = onRequest(
     cors(req, res, async () => {
       try {
         const plaid = getPlaidClient(PLAID_CLIENT_ID.value(), PLAID_SECRET.value());
+        const { redirect_uri } = req.body || {};
         const response = await plaid.linkTokenCreate({
           user: { client_user_id: 'powerdars-user' },
           client_name: 'PowerDARS',
           products: ['auth'],
           country_codes: ['US'],
           language: 'en',
+          ...(redirect_uri ? { redirect_uri } : {}),
         });
         res.json({ link_token: response.data.link_token });
       } catch (err) {

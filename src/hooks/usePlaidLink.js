@@ -21,7 +21,12 @@ export function usePlaidLink() {
   const openLink = useCallback(async (accountId, onSuccess) => {
     try {
       // 1. Get a link_token from our Cloud Function
-      const res = await fetch(FUNCTION_URLS.createLinkToken, { method: 'POST' });
+      const redirectUri = window.location.origin + window.location.pathname;
+      const res = await fetch(FUNCTION_URLS.createLinkToken, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ redirect_uri: redirectUri }),
+      });
       if (!res.ok) throw new Error('Failed to get link token');
       const { link_token } = await res.json();
 
@@ -31,6 +36,7 @@ export function usePlaidLink() {
       // 3. Open Plaid Link UI
       const handler = window.Plaid.create({
         token: link_token,
+        receivedRedirectUri: document.referrer.includes('plaid') ? window.location.href : undefined,
         onSuccess: async (public_token, metadata) => {
           // 4. Exchange the public token for a permanent access token (server-side)
           const ex = await fetch(FUNCTION_URLS.exchangePublicToken, {
