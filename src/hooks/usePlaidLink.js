@@ -47,8 +47,12 @@ async function initPlaidLink({ accountId, onSuccess, receivedRedirectUri }) {
       if (!ex.ok) throw new Error('Token exchange failed');
       onSuccess?.(metadata);
     },
-    onExit: (err) => {
-      if (err) console.warn('Plaid Link exited with error:', err);
+    onExit: (err, metadata) => {
+      if (err) {
+        console.error('Plaid onExit error:', JSON.stringify(err));
+        console.error('Plaid onExit metadata:', JSON.stringify(metadata));
+        alert(`Plaid error: ${err.error_code} — ${err.error_message}`);
+      }
     },
   });
 
