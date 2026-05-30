@@ -29,8 +29,14 @@ async function initPlaidLink({ accountId, onSuccess, receivedRedirectUri }) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ redirect_uri: getRedirectUri() }),
   });
-  if (!res.ok) throw new Error('Failed to get link token');
-  const { link_token } = await res.json();
+  const tokenData = await res.json();
+  if (!res.ok) {
+    const detail = tokenData.plaid_error_code
+      ? `${tokenData.plaid_error_code}: ${tokenData.plaid_error_message}`
+      : 'Failed to get link token';
+    throw new Error(detail);
+  }
+  const { link_token } = tokenData;
 
   await loadPlaidScript();
 

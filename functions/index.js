@@ -45,8 +45,14 @@ exports.createLinkToken = onRequest(
         });
         res.json({ link_token: response.data.link_token });
       } catch (err) {
-        console.error('createLinkToken error:', err.response?.data || err.message);
-        res.status(500).json({ error: 'Failed to create link token' });
+        const plaidErr = err.response?.data;
+        console.error('createLinkToken error:', plaidErr || err.message);
+        res.status(500).json({
+          error: 'Failed to create link token',
+          plaid_error_type: plaidErr?.error_type,
+          plaid_error_code: plaidErr?.error_code,
+          plaid_error_message: plaidErr?.error_message,
+        });
       }
     });
   }
