@@ -1,15 +1,20 @@
 // v2
 const { onRequest } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const { PlaidApi, PlaidEnvironments, Configuration } = require('plaid');
 const cors = require('cors')({ origin: true });
+const twilio = require('twilio');
 
 admin.initializeApp();
 const db = admin.firestore();
 
-const PLAID_CLIENT_ID = defineSecret('PLAID_CLIENT_ID');
-const PLAID_SECRET    = defineSecret('PLAID_SECRET');
+const PLAID_CLIENT_ID      = defineSecret('PLAID_CLIENT_ID');
+const PLAID_SECRET         = defineSecret('PLAID_SECRET');
+const TWILIO_ACCOUNT_SID   = defineSecret('TWILIO_ACCOUNT_SID');
+const TWILIO_AUTH_TOKEN    = defineSecret('TWILIO_AUTH_TOKEN');
+const TWILIO_FROM_NUMBER   = defineSecret('TWILIO_FROM_NUMBER');
 
 // Plaid environment: 'sandbox' | 'development' | 'production'
 const PLAID_ENV = 'development';
@@ -154,5 +159,74 @@ exports.syncBalances = onRequest(
         res.status(500).json({ error: 'Failed to sync balances' });
       }
     });
+  }
+);
+
+// ── sendShiftReminders ─────────────────────────────────────────────────────
+// Runs every hour. Checks if any work shift starts in ~12 hours and texts
+// the user's phone number via Twilio if so.
+const SHIFT_START_HOURS = {
+  '8am-8pm':  8,
+  '8pm-8am':  20,
+  '3pm-11pm': 15,
+  '7am-3pm':  7,
+  '11pm-7am': 23,
+};
+
+exports.sendShiftReminders = onSchedule(
+  {
+    schedule: 'every 60 minutes',
+    timeZone: 'America/New_York',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER],
+  },
+  async () => {
+    try {
+      // Get user phone number from settings
+      const settingsSnap = await db.collection('settings').doc('app').get();
+      const phoneNumber = settingsSnap.exists ? settingsSnap.data().phoneNumber : null;
+      if (!phoneNumber) return;
+
+      const now = new Date();
+
+      // Look at work schedule docs for today and tomorrow
+      const checkDates = [];
+      for (let offset = 0; offset <= 1; offset++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() + offset);
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        checkDates.push(`${y}-${mo}-${dy}`);
+      }
+
+      for (const dateStr of checkDates) {
+        const snap = await db.collection('workSchedule').doc(dateStr).get();
+        if (!snap.exists) continue;
+
+        const { shift, location } = snap.data();
+        const startHour = SHIFT_START_HOURS[shift];
+        if (startHour === undefined) continue;
+
+        // Build the shift start datetime in the server's local time
+        const [sy, sm, sd] = dateStr.split('-').map(Number);
+        const shiftStart = new Date(sy, sm - 1, sd, startHour, 0, 0, 0);
+        const diffMs = shiftStart - now;
+        const diffHours = diffMs / (1000 * 60 * 60);
+
+        // Send reminder if shift starts between 11.5 and 12.5 hours from now
+        if (diffHours >= 11.5 && diffHours <= 12.5) {
+          const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+          const locationStr = location ? ` at ${location}` : '';
+          await client.messages.create({
+            body: `⏰ PowerDARS Reminder: Your ${shift} shift starts in 12 hours${locationStr}. Stay ready!`,
+            from: TWILIO_FROM_NUMBER.value(),
+            to: phoneNumber,
+          });
+          console.log(`Sent shift reminder for ${dateStr} ${shift} to ${phoneNumber}`);
+        }
+      }
+    } catch (err) {
+      console.error('sendShiftReminders error:', err.message);
+    }
   }
 );

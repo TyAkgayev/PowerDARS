@@ -7,6 +7,7 @@ const NAV = [
   { id: 'accounts',  label: 'Accounts',  icon: '🏦' },
   { id: 'car',       label: 'Car',        icon: '🚗' },
   { id: 'rn',        label: 'RN License', icon: '🏥' },
+  { id: 'work',      label: 'Work',       icon: '💼' },
 ];
 
 export default function Sidebar({ currentScreen, onNavigate }) {

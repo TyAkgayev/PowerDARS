@@ -24,6 +24,7 @@ export function AppProvider({ children }) {
   const [cars, setCars] = useState([]);
   const [driverProfile, setDriverProfile] = useState({ points: '', tickets: '', courts: '' });
   const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
+  const [workSchedule, setWorkSchedule] = useState({});
 
   // Accounts listener
   useEffect(() => {
@@ -96,6 +97,16 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'driverProfile'), (snap) => {
       if (snap.exists()) setDriverProfile(snap.data());
+    });
+    return unsub;
+  }, []);
+
+  // Work schedule listener
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'workSchedule'), (snap) => {
+      const sched = {};
+      snap.docs.forEach(d => { sched[d.id] = { id: d.id, ...d.data() }; });
+      setWorkSchedule(sched);
     });
     return unsub;
   }, []);
@@ -176,6 +187,15 @@ export function AppProvider({ children }) {
     await setDoc(doc(db, 'settings', 'rnProfile'), data, { merge: true });
   }, []);
 
+  // — Work Schedule —
+  const setWorkShift = useCallback(async (dateStr, shift, location) => {
+    await setDoc(doc(db, 'workSchedule', dateStr), { date: dateStr, shift, location: location || '' });
+  }, []);
+
+  const deleteWorkShift = useCallback(async (dateStr) => {
+    await deleteDoc(doc(db, 'workSchedule', dateStr));
+  }, []);
+
   // — DARS —
   const saveDars = useCallback(async (entries) => {
     const date = todayStr();
@@ -211,6 +231,7 @@ export function AppProvider({ children }) {
       cars, addCar, updateCar, deleteCar,
       driverProfile, saveDriverProfile,
       rnProfile, saveRNProfile,
+      workSchedule, setWorkShift, deleteWorkShift,
     }}>
       {children}
     </AppContext.Provider>
