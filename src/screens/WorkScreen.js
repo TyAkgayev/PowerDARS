@@ -16,6 +16,8 @@ const C = {
   border: '#E5E7EB',
 };
 
+const SEND_NEXT_SHIFT_URL = 'https://sendnextshiftnow-v5nh5hrtnq-uc.a.run.app';
+
 const SHIFTS = [
   { id: '8am-8pm',   label: '8am – 8pm',   start: 8,  color: '#3B82F6' },
   { id: '8pm-8am',   label: '8pm – 8am',   start: 20, color: '#8B5CF6' },
@@ -127,6 +129,7 @@ export default function WorkScreen() {
   const [location, setLocation] = useState('');
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [sending, setSending] = useState(false);
 
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -146,6 +149,23 @@ export default function WorkScreen() {
     const ds = dateStr(year, month, day);
     deleteWorkShift(ds);
   }, [year, month, deleteWorkShift]);
+
+  const handleSendNextShift = useCallback(async () => {
+    setSending(true);
+    try {
+      const res = await fetch(SEND_NEXT_SHIFT_URL, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✅ Text sent! Next shift: ${data.shift} on ${data.date} (${data.hoursUntil}h away)`);
+      } else {
+        alert(`❌ ${data.error}`);
+      }
+    } catch (e) {
+      alert('Could not reach server. Try again.');
+    } finally {
+      setSending(false);
+    }
+  }, []);
 
   const handleSavePhone = useCallback((phone) => {
     setPhoneNumber(phone);
@@ -175,9 +195,14 @@ export default function WorkScreen() {
           <Text style={[s.title, isMobile && s.titleMobile]}>💼 Work Schedule</Text>
           <Text style={s.sub}>{monthEntries.length} shift{monthEntries.length !== 1 ? 's' : ''} this month</Text>
         </View>
-        <TouchableOpacity style={s.phoneBtn} onPress={() => setShowPhoneModal(true)}>
-          <Text style={s.phoneBtnTxt}>📱 SMS Reminders</Text>
-        </TouchableOpacity>
+        <View style={s.headerBtns}>
+          <TouchableOpacity style={s.phoneBtn} onPress={() => setShowPhoneModal(true)}>
+            <Text style={s.phoneBtnTxt}>📱 SMS Setup</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.testBtn, sending && s.testBtnDisabled]} onPress={handleSendNextShift} disabled={sending}>
+            <Text style={s.testBtnTxt}>{sending ? 'Sending…' : '📨 Send Next Shift'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Location + Month Nav */}
@@ -295,8 +320,12 @@ const s = StyleSheet.create({
   titleMobile: { fontSize: 20 },
   sub: { fontSize: 13, color: C.muted, marginTop: 3 },
 
+  headerBtns: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' },
   phoneBtn: { backgroundColor: C.primaryLight, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
   phoneBtnTxt: { fontSize: 13, fontWeight: '600', color: C.primary },
+  testBtn: { backgroundColor: '#22C55E', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
+  testBtnDisabled: { opacity: 0.5 },
+  testBtnTxt: { fontSize: 13, fontWeight: '600', color: '#fff' },
 
   controlRow: { flexDirection: 'row', gap: 16, alignItems: 'flex-end', marginBottom: 18 },
   controlRowMobile: { flexDirection: 'column', gap: 12 },
