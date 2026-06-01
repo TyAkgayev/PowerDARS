@@ -162,53 +162,78 @@ exports.syncBalances = onRequest(
   }
 );
 
-// ── sendNextShiftNow ──────────────────────────────────────────────────────
-// Manually triggered: finds the next upcoming shift and texts it immediately.
-exports.sendNextShiftNow = onRequest(
+// ── sendWelcomeSms ────────────────────────────────────────────────────────
+// Called when the user saves their phone number. Sends a welcome text
+// explaining they can reply "next" to get their next shift.
+exports.sendWelcomeSms = onRequest(
   { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER], cors: true, invoker: 'public' },
   async (req, res) => {
     cors(req, res, async () => {
       try {
-        const settingsSnap = await db.collection('settings').doc('app').get();
-        const phoneNumber = settingsSnap.exists ? settingsSnap.data().phoneNumber : null;
-        if (!phoneNumber) return res.status(400).json({ error: 'No phone number saved. Set it in the Work tab.' });
-
-        const now = new Date();
-        const pad = n => String(n).padStart(2, '0');
-        const toDateStr = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-
-        // Search next 14 days for the nearest upcoming shift
-        let nextShift = null;
-        for (let i = 0; i < 14; i++) {
-          const d = new Date(now);
-          d.setDate(d.getDate() + i);
-          const ds = toDateStr(d);
-          const snap = await db.collection('workSchedule').doc(ds).get();
-          if (!snap.exists) continue;
-          const { shift, location } = snap.data();
-          const startHour = SHIFT_START_HOURS[shift];
-          if (startHour === undefined) continue;
-          const shiftStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), startHour, 0, 0);
-          if (shiftStart > now) { nextShift = { ds, shift, location, shiftStart }; break; }
-        }
-
-        if (!nextShift) return res.status(404).json({ error: 'No upcoming shifts found in the next 14 days.' });
-
-        const hoursUntil = Math.round((nextShift.shiftStart - now) / (1000 * 60 * 60));
-        const locationStr = nextShift.location ? ` at ${nextShift.location}` : '';
+        const { phone } = req.body || {};
+        if (!phone) return res.status(400).json({ error: 'phone required' });
         const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
         await client.messages.create({
-          body: `⏰ PowerDARS: Next shift is ${nextShift.shift} on ${nextShift.ds}${locationStr} — ${hoursUntil}h from now.`,
+          body: `👋 Welcome to PowerDARS shift reminders!\n\nYou'll get a text 12 hours before each shift.\n\nYou can also text this number "next" anytime to get your next upcoming shift.`,
           from: TWILIO_FROM_NUMBER.value(),
-          to: phoneNumber,
+          to: phone,
         });
-
-        res.json({ success: true, shift: nextShift.shift, date: nextShift.ds, hoursUntil });
+        res.json({ success: true });
       } catch (err) {
-        console.error('sendNextShiftNow error:', err.message);
+        console.error('sendWelcomeSms error:', err.message);
         res.status(500).json({ error: err.message });
       }
     });
+  }
+);
+
+// ── handleIncomingSMS ─────────────────────────────────────────────────────
+// Twilio webhook: receives inbound texts to the Twilio number.
+// If the body is "next", replies with the next upcoming shift.
+exports.handleIncomingSMS = onRequest(
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER], invoker: 'public' },
+  async (req, res) => {
+    try {
+      const body = (req.body.Body || '').trim().toLowerCase();
+      const from = req.body.From;
+
+      const twiml = (msg) => {
+        res.set('Content-Type', 'text/xml');
+        res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`);
+      };
+
+      if (body !== 'next') {
+        return twiml('Text "next" to get your next upcoming shift.');
+      }
+
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const toDateStr = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+      let nextShift = null;
+      for (let i = 0; i < 14; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() + i);
+        const ds = toDateStr(d);
+        const snap = await db.collection('workSchedule').doc(ds).get();
+        if (!snap.exists) continue;
+        const { shift, location } = snap.data();
+        const startHour = SHIFT_START_HOURS[shift];
+        if (startHour === undefined) continue;
+        const shiftStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), startHour, 0, 0);
+        if (shiftStart > now) { nextShift = { ds, shift, location, shiftStart }; break; }
+      }
+
+      if (!nextShift) return twiml('No upcoming shifts found in the next 14 days.');
+
+      const hoursUntil = Math.round((nextShift.shiftStart - now) / (1000 * 60 * 60));
+      const locationStr = nextShift.location ? `\n📍 ${nextShift.location}` : '';
+      twiml(`⏰ Next shift: ${nextShift.shift}\n📅 ${nextShift.ds}${locationStr}\n🕐 ${hoursUntil}h from now`);
+    } catch (err) {
+      console.error('handleIncomingSMS error:', err.message);
+      res.set('Content-Type', 'text/xml');
+      res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Error looking up your schedule. Try again later.</Message></Response>`);
+    }
   }
 );
 
