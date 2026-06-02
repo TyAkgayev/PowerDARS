@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 
 const NAV = [
@@ -10,7 +10,34 @@ const NAV = [
   { id: 'work',      label: 'Work',       icon: '💼' },
 ];
 
+const FALLBACK = { text: 'Small steps today create peace tomorrow.', author: null };
+
+function useDailyQuote() {
+  const [quote, setQuote] = useState(FALLBACK);
+
+  useEffect(() => {
+    const cacheKey = 'powersync_quote_' + new Date().toISOString().slice(0, 10);
+    const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(cacheKey) : null;
+    if (cached) { try { setQuote(JSON.parse(cached)); return; } catch {} }
+
+    fetch('https://zenquotes.io/api/today')
+      .then(r => r.json())
+      .then(data => {
+        if (data?.[0]?.q) {
+          const q = { text: data[0].q, author: data[0].a };
+          setQuote(q);
+          if (typeof localStorage !== 'undefined') localStorage.setItem(cacheKey, JSON.stringify(q));
+        }
+      })
+      .catch(() => {}); // silently fall back
+  }, []);
+
+  return quote;
+}
+
 export default function Sidebar({ currentScreen, onNavigate }) {
+  const quote = useDailyQuote();
+
   return (
     <View style={styles.sidebar}>
       <View style={styles.logo}>
@@ -19,6 +46,8 @@ export default function Sidebar({ currentScreen, onNavigate }) {
           style={styles.logoImg}
           resizeMode="contain"
         />
+        <Text style={styles.logoBlack}>Power</Text>
+        <Text style={styles.logoBlue}>Sync</Text>
       </View>
 
       <View style={styles.nav}>
@@ -42,8 +71,8 @@ export default function Sidebar({ currentScreen, onNavigate }) {
 
       <View style={styles.bottomCard}>
         <Text style={styles.bottomIcon}>✨</Text>
-        <Text style={styles.bottomTitle}>Stay in control</Text>
-        <Text style={styles.bottomSub}>Small steps today create peace tomorrow.</Text>
+        <Text style={styles.bottomSub}>"{quote.text}"</Text>
+        {quote.author && <Text style={styles.bottomAuthor}>— {quote.author}</Text>}
       </View>
     </View>
   );
@@ -60,13 +89,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   logo: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 36,
+    paddingLeft: 8,
   },
   logoImg: {
-    width: 160,
-    height: 107,
+    width: 48,
+    height: 48,
+    marginRight: 8,
   },
+  logoBlack: { fontSize: 20, fontWeight: '700', color: '#1F2937' },
+  logoBlue: { fontSize: 20, fontWeight: '700', color: '#4361EE' },
   nav: { flex: 1 },
   navItem: {
     flexDirection: 'row',
@@ -86,6 +120,6 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   bottomIcon: { fontSize: 22, marginBottom: 8 },
-  bottomTitle: { fontSize: 14, fontWeight: '700', color: '#1F2937', marginBottom: 4 },
-  bottomSub: { fontSize: 12, color: '#6B7280', lineHeight: 17 },
+  bottomSub: { fontSize: 12, color: '#6B7280', lineHeight: 17, fontStyle: 'italic' },
+  bottomAuthor: { fontSize: 11, color: '#9CA3AF', marginTop: 6, fontWeight: '600' },
 });
