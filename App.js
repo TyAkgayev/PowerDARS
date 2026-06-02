@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, useWindowDimensions, Image } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AppProvider, useApp } from './src/context/AppContext';
 import Sidebar from './src/components/Sidebar';
@@ -33,10 +33,7 @@ function MainApp() {
   if (loading) {
     return (
       <View style={styles.loading}>
-        <Text style={styles.logoLine}>
-          <Text style={styles.logoBlack}>Power</Text>
-          <Text style={styles.logoBlue}>Sync</Text>
-        </Text>
+        <Image source={require('./assets/logo.png')} style={styles.loadingLogo} resizeMode="contain" />
         <ActivityIndicator size="large" color="#4361EE" style={{ marginTop: 20 }} />
       </View>
     );
@@ -115,7 +112,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#F0F4FF',
   },
-  logoLine: { fontSize: 32, fontWeight: '800' },
-  logoBlack: { color: '#1F2937' },
-  logoBlue: { color: '#4361EE' },
+  loadingLogo: { width: 240, height: 160 },
 });

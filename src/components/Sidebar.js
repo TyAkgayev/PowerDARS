@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
@@ -14,9 +14,11 @@ export default function Sidebar({ currentScreen, onNavigate }) {
   return (
     <View style={styles.sidebar}>
       <View style={styles.logo}>
-        <Text style={styles.logoIcon}>⚡</Text>
-        <Text style={styles.logoBlack}>Power</Text>
-        <Text style={styles.logoBlue}>Sync</Text>
+        <Image
+          source={require('../../assets/logo.png')}
+          style={styles.logoImg}
+          resizeMode="contain"
+        />
       </View>
 
       <View style={styles.nav}>
@@ -58,14 +60,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   logo: {
-    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 36,
-    paddingLeft: 8,
+    marginBottom: 28,
   },
-  logoIcon: { fontSize: 22, marginRight: 6 },
-  logoBlack: { fontSize: 20, fontWeight: '700', color: '#1F2937' },
-  logoBlue: { fontSize: 20, fontWeight: '700', color: '#4361EE' },
+  logoImg: {
+    width: 160,
+    height: 107,
+  },
   nav: { flex: 1 },
   navItem: {
     flexDirection: 'row',

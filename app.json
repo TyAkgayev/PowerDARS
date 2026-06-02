@@ -18,7 +18,9 @@
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/logo.png",
+      "name": "PowerSync",
+      "shortName": "PowerSync"
     }
   }
 }
