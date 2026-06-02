@@ -162,6 +162,27 @@ exports.syncBalances = onRequest(
   }
 );
 
+// ── getDailyQuote ─────────────────────────────────────────────────────────
+// Proxies ZenQuotes so the browser avoids CORS. Returns today's quote.
+exports.getDailyQuote = onRequest(
+  { cors: true, invoker: 'public' },
+  async (req, res) => {
+    cors(req, res, async () => {
+      try {
+        const response = await fetch('https://zenquotes.io/api/today');
+        const data = await response.json();
+        if (data?.[0]?.q) {
+          res.json({ text: data[0].q, author: data[0].a });
+        } else {
+          res.status(502).json({ error: 'No quote returned' });
+        }
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+  }
+);
+
 // ── sendWelcomeSms ────────────────────────────────────────────────────────
 // Called when the user saves their phone number. Sends a welcome text
 // explaining they can reply "next" to get their next shift.

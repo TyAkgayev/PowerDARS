@@ -20,13 +20,12 @@ function useDailyQuote() {
     const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(cacheKey) : null;
     if (cached) { try { setQuote(JSON.parse(cached)); return; } catch {} }
 
-    fetch('https://zenquotes.io/api/today')
+    fetch('https://us-central1-dars-4e5d0.cloudfunctions.net/getDailyQuote')
       .then(r => r.json())
       .then(data => {
-        if (data?.[0]?.q) {
-          const q = { text: data[0].q, author: data[0].a };
-          setQuote(q);
-          if (typeof localStorage !== 'undefined') localStorage.setItem(cacheKey, JSON.stringify(q));
+        if (data?.text) {
+          setQuote(data);
+          if (typeof localStorage !== 'undefined') localStorage.setItem(cacheKey, JSON.stringify(data));
         }
       })
       .catch(() => {}); // silently fall back
