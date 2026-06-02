@@ -42,7 +42,7 @@ exports.createLinkToken = onRequest(
         const { redirect_uri } = req.body || {};
         const response = await plaid.linkTokenCreate({
           user: { client_user_id: 'powerdars-user' },
-          client_name: 'PowerDARS',
+          client_name: 'PowerSync',
           products: ['auth'],
           country_codes: ['US'],
           language: 'en',
@@ -174,7 +174,7 @@ exports.sendWelcomeSms = onRequest(
         if (!phone) return res.status(400).json({ error: 'phone required' });
         const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
         await client.messages.create({
-          body: `👋 Welcome to PowerDARS shift reminders!\n\nYou'll get a text 12 hours before each shift.\n\nYou can also text this number "next" anytime to get your next upcoming shift.`,
+          body: `👋 Welcome to PowerSync shift reminders!\n\nYou'll get a text 12 hours before each shift.\n\nYou can also text this number "next" anytime to get your next upcoming shift.`,
           from: TWILIO_FROM_NUMBER.value(),
           to: phone,
         });
@@ -293,7 +293,7 @@ exports.sendShiftReminders = onSchedule(
           const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
           const locationStr = location ? ` at ${location}` : '';
           await client.messages.create({
-            body: `⏰ PowerDARS Reminder: Your ${shift} shift starts in 12 hours${locationStr}. Stay ready!`,
+            body: `⏰ PowerSync Reminder: Your ${shift} shift starts in 12 hours${locationStr}. Stay ready!`,
             from: TWILIO_FROM_NUMBER.value(),
             to: phoneNumber,
           });

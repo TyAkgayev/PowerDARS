@@ -35,7 +35,7 @@ function MainApp() {
       <View style={styles.loading}>
         <Text style={styles.logoLine}>
           <Text style={styles.logoBlack}>Power</Text>
-          <Text style={styles.logoBlue}>DARS</Text>
+          <Text style={styles.logoBlue}>Sync</Text>
         </Text>
         <ActivityIndicator size="large" color="#4361EE" style={{ marginTop: 20 }} />
       </View>

@@ -16,7 +16,7 @@ export default function Sidebar({ currentScreen, onNavigate }) {
       <View style={styles.logo}>
         <Text style={styles.logoIcon}>⚡</Text>
         <Text style={styles.logoBlack}>Power</Text>
-        <Text style={styles.logoBlue}>DARS</Text>
+        <Text style={styles.logoBlue}>Sync</Text>
       </View>
 
       <View style={styles.nav}>
