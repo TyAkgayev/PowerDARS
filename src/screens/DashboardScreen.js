@@ -78,7 +78,7 @@ function Sparkline({ data = [], color = '#4361EE', width = 90, height = 36 }) {
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
-function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome }) {
+function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems }) {
   const today = new Date();
   const [yr, setYr] = useState(today.getFullYear());
   const [mo, setMo] = useState(today.getMonth());
@@ -96,7 +96,34 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
   const hoverCellRef = useRef(null);
   const [dragOverStr, setDragOverStr] = useState(null);
 
+  // ── Expense bag refs ─────────────────────────────────────────────────────
+  const expenseDragAnim = useRef(new Animated.ValueXY()).current;
+  const [isExpenseDragging, setIsExpenseDragging] = useState(false);
+  const expenseHoverCellRef = useRef(null);
+  const projExpenseRef = useRef({});
+  const [expenseDragOverStr, setExpenseDragOverStr] = useState(null);
+  const [expenseModal, setExpenseModal] = useState(null);
+  const [expenseInput, setExpenseInput] = useState('');
+  const [expenseName, setExpenseName] = useState('');
+
+  // ── Loan bag refs ────────────────────────────────────────────────────────
+  const loanDragAnim = useRef(new Animated.ValueXY()).current;
+  const [isLoanDragging, setIsLoanDragging] = useState(false);
+  const loanHoverCellRef = useRef(null);
+  const [loanDragOverStr, setLoanDragOverStr] = useState(null);
+  const [loanModal, setLoanModal] = useState(null);
+  const [loanAmount, setLoanAmount] = useState('');
+  const [loanDesc, setLoanDesc] = useState('');
+  const [loanRepayDate, setLoanRepayDate] = useState('');
+
+  // ── Defer system ─────────────────────────────────────────────────────────
+  const [contextMenu, setContextMenu] = useState(null);
+  const [deferModal, setDeferModal] = useState(null);
+  const [deferDate, setDeferDate] = useState('');
+  const [deferIndefinite, setDeferIndefinite] = useState(false);
+
   useEffect(() => { projIncomeRef.current = projectedIncome; }, [projectedIncome]);
+  useEffect(() => { projExpenseRef.current = projectedExpenses || {}; }, [projectedExpenses]);
 
   const onGridLayout = useCallback(() => {
     gridRef.current?.measure((fx, fy, width, height, px, py) => {
@@ -146,9 +173,8 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
       if (dateStr) {
         const n = new Date(); n.setHours(0, 0, 0, 0);
         if (new Date(dateStr + 'T00:00:00') >= n) {
-          const existing = projIncomeRef.current[dateStr];
-          setIncomeInput(existing ? String(existing.amount ?? existing) : '');
-          setIncomeSource(existing?.source || '');
+          setIncomeInput('');
+          setIncomeSource('');
           setIncomeModal(dateStr);
         }
       }
@@ -162,6 +188,119 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
       setDragOverStr(null);
       Animated.spring(dragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
       setIsDragging(false);
+    },
+  })).current;
+
+  const expenseBagResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponderCapture: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => {
+      expenseDragAnim.setValue({ x: 0, y: 0 });
+      setIsExpenseDragging(true);
+    },
+    onPanResponderMove: (e, gs) => {
+      expenseDragAnim.x.setValue(gs.dx);
+      expenseDragAnim.y.setValue(gs.dy);
+      const x = e.nativeEvent.clientX ?? gs.moveX;
+      const y = e.nativeEvent.clientY ?? gs.moveY;
+      let found = null;
+      if (x != null && y != null && typeof document !== 'undefined') {
+        const el = document.getElementById('powerdars-cal-grid');
+        if (el) {
+          const r = el.getBoundingClientRect();
+          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            const col = Math.min(6, Math.floor((x - r.left) / (r.width / 7)));
+            const row = Math.min(5, Math.floor((y - r.top) / (r.height / 6)));
+            const cell = cellsRef.current[row * 7 + col];
+            if (cell?.cur && cell?.str) found = cell.str;
+          }
+        }
+      }
+      if (found !== expenseHoverCellRef.current) {
+        expenseHoverCellRef.current = found;
+        setExpenseDragOverStr(found);
+      }
+    },
+    onPanResponderRelease: () => {
+      const dateStr = expenseHoverCellRef.current;
+      if (dateStr) {
+        const n = new Date(); n.setHours(0, 0, 0, 0);
+        if (new Date(dateStr + 'T00:00:00') >= n) {
+          setExpenseInput('');
+          setExpenseName('');
+          setExpenseModal(dateStr);
+        }
+      }
+      expenseHoverCellRef.current = null;
+      setExpenseDragOverStr(null);
+      Animated.spring(expenseDragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false, tension: 40, friction: 7 }).start();
+      setIsExpenseDragging(false);
+    },
+    onPanResponderTerminate: () => {
+      expenseHoverCellRef.current = null;
+      setExpenseDragOverStr(null);
+      Animated.spring(expenseDragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+      setIsExpenseDragging(false);
+    },
+  })).current;
+
+  const loanBagResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponderCapture: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => {
+      loanDragAnim.setValue({ x: 0, y: 0 });
+      setIsLoanDragging(true);
+    },
+    onPanResponderMove: (e, gs) => {
+      loanDragAnim.x.setValue(gs.dx);
+      loanDragAnim.y.setValue(gs.dy);
+      const x = e.nativeEvent.clientX ?? gs.moveX;
+      const y = e.nativeEvent.clientY ?? gs.moveY;
+      let found = null;
+      if (x != null && y != null && typeof document !== 'undefined') {
+        const el = document.getElementById('powerdars-cal-grid');
+        if (el) {
+          const r = el.getBoundingClientRect();
+          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            const col = Math.min(6, Math.floor((x - r.left) / (r.width / 7)));
+            const row = Math.min(5, Math.floor((y - r.top) / (r.height / 6)));
+            const cell = cellsRef.current[row * 7 + col];
+            if (cell?.cur && cell?.str) found = cell.str;
+          }
+        }
+      }
+      if (found !== loanHoverCellRef.current) {
+        loanHoverCellRef.current = found;
+        setLoanDragOverStr(found);
+      }
+    },
+    onPanResponderRelease: () => {
+      const dateStr = loanHoverCellRef.current;
+      if (dateStr) {
+        const n = new Date(); n.setHours(0, 0, 0, 0);
+        if (new Date(dateStr + 'T00:00:00') >= n) {
+          setLoanAmount('');
+          setLoanDesc('');
+          setLoanRepayDate('');
+          setLoanModal(dateStr);
+        }
+      }
+      loanHoverCellRef.current = null;
+      setLoanDragOverStr(null);
+      Animated.spring(loanDragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false, tension: 40, friction: 7 }).start();
+      setIsLoanDragging(false);
+    },
+    onPanResponderTerminate: () => {
+      loanHoverCellRef.current = null;
+      setLoanDragOverStr(null);
+      Animated.spring(loanDragAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+      setIsLoanDragging(false);
     },
   })).current;
 
@@ -269,7 +408,16 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
       const dateStr = `${y}-${pad(m + 1)}-${pad(d)}`;
 
       const incEntry = projectedIncome[dateStr];
-      balance += incEntry ? (parseFloat(incEntry.amount ?? incEntry) || 0) : 0;
+      const incDayTotal = Array.isArray(incEntry)
+        ? incEntry.reduce((s, e) => s + (parseFloat(e.amount ?? e) || 0), 0)
+        : incEntry ? (parseFloat(incEntry.amount ?? incEntry) || 0) : 0;
+      balance += incDayTotal;
+
+      const expEntry = (projectedExpenses || {})[dateStr];
+      const expDayTotal = Array.isArray(expEntry)
+        ? expEntry.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
+        : expEntry ? (parseFloat(expEntry.amount) || 0) : 0;
+      balance -= expDayTotal;
 
       const events = [
         ...(billsByDate[dateStr] || []),
@@ -286,7 +434,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
       iterDate.setDate(iterDate.getDate() + 1);
     }
     return result;
-  }, [accounts, darsHistory, billsByDate, projectedIncome, yr, mo]);
+  }, [accounts, darsHistory, billsByDate, projectedIncome, projectedExpenses, yr, mo]);
 
   const goBack = () => { if (mo === 0) { setMo(11); setYr(y => y-1); } else setMo(m => m-1); };
   const goFwd  = () => { if (mo === 11) { setMo(0); setYr(y => y+1); } else setMo(m => m+1); };
@@ -299,25 +447,105 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
 
   const handleAddIncome = () => {
     const amt = parseFloat(incomeInput);
-    const newIncome = { ...projIncomeRef.current };
     if (!isNaN(amt) && amt > 0) {
-      newIncome[incomeModal] = { amount: amt, source: incomeSource.trim() };
-    } else {
-      delete newIncome[incomeModal];
+      const newIncome = { ...projIncomeRef.current };
+      const raw = newIncome[incomeModal];
+      const existing = Array.isArray(raw) ? raw
+        : raw ? [{ amount: parseFloat(raw.amount ?? raw) || 0, source: raw.source || '' }]
+        : [];
+      newIncome[incomeModal] = [...existing, { amount: amt, source: incomeSource.trim() }];
+      saveProjectedIncome(newIncome);
     }
-    saveProjectedIncome(newIncome);
     closeIncomeModal();
   };
+
+  const handleDeleteIncomeEntry = (dateStr, idx) => {
+    const newIncome = { ...projIncomeRef.current };
+    const raw = newIncome[dateStr];
+    const existing = Array.isArray(raw) ? raw
+      : raw ? [{ amount: parseFloat(raw.amount ?? raw) || 0, source: raw.source || '' }]
+      : [];
+    const updated = existing.filter((_, i) => i !== idx);
+    if (updated.length === 0) delete newIncome[dateStr];
+    else newIncome[dateStr] = updated;
+    saveProjectedIncome(newIncome);
+  };
+
+  // ── Expense handlers ──────────────────────────────────────────────────────
+  const closeExpenseModal = () => { setExpenseModal(null); setExpenseInput(''); setExpenseName(''); };
+
+  const handleAddExpense = () => {
+    const amt = parseFloat(expenseInput);
+    if (!isNaN(amt) && amt > 0) {
+      const newExp = { ...projExpenseRef.current };
+      const raw = newExp[expenseModal];
+      const existing = Array.isArray(raw) ? raw : raw ? [raw] : [];
+      newExp[expenseModal] = [...existing, { amount: amt, name: expenseName.trim() || 'Expense' }];
+      saveProjectedExpenses(newExp);
+    }
+    closeExpenseModal();
+  };
+
+  const handleDeleteExpenseEntry = (dateStr, idx) => {
+    const newExp = { ...projExpenseRef.current };
+    const raw = newExp[dateStr];
+    const existing = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    const updated = existing.filter((_, i) => i !== idx);
+    if (updated.length === 0) delete newExp[dateStr];
+    else newExp[dateStr] = updated;
+    saveProjectedExpenses(newExp);
+  };
+
+  // ── Loan handlers ─────────────────────────────────────────────────────────
+  const closeLoanModal = () => { setLoanModal(null); setLoanAmount(''); setLoanDesc(''); setLoanRepayDate(''); };
+
+  const handleAddLoan = () => {
+    const amt = parseFloat(loanAmount);
+    if (!isNaN(amt) && amt > 0 && loanModal && loanRepayDate) {
+      const incomeLabel = loanDesc.trim() || 'Loan';
+      const newIncome = { ...projIncomeRef.current };
+      const rawInc = newIncome[loanModal];
+      const existingInc = Array.isArray(rawInc) ? rawInc
+        : rawInc ? [{ amount: parseFloat(rawInc.amount ?? rawInc) || 0, source: rawInc.source || '' }]
+        : [];
+      newIncome[loanModal] = [...existingInc, { amount: amt, source: incomeLabel }];
+      saveProjectedIncome(newIncome);
+
+      const newExp = { ...projExpenseRef.current };
+      const rawExp = newExp[loanRepayDate];
+      const existingExp = Array.isArray(rawExp) ? rawExp : rawExp ? [rawExp] : [];
+      newExp[loanRepayDate] = [...existingExp, { amount: amt, name: `Repay: ${incomeLabel}` }];
+      saveProjectedExpenses(newExp);
+    }
+    closeLoanModal();
+  };
+
+  // ── Defer handlers ────────────────────────────────────────────────────────
+  const handleDefer = () => {
+    if (!deferModal) return;
+    const { entry, dateStr, entryIdx } = deferModal;
+    handleDeleteExpenseEntry(dateStr, entryIdx);
+    const newDeferred = [...(deferredItems || []), {
+      id: Date.now().toString(),
+      name: entry.name || 'Expense',
+      amount: entry.amount,
+      dateDeferred: dateStr,
+      deferUntil: deferIndefinite ? null : deferDate,
+    }];
+    saveDeferredItems(newDeferred);
+    setDeferModal(null);
+    setDeferDate('');
+    setDeferIndefinite(false);
+  };
+
+  // payDeferred handled at DashboardScreen level (state passed down)
 
   return (
     <View style={cal.card}>
       {/* Income injection modal */}
-      <Modal visible={incomeModal !== null} transparent animationType="fade"
-        onRequestClose={closeIncomeModal}>
+      <Modal visible={incomeModal !== null} transparent animationType="fade" onRequestClose={closeIncomeModal}>
         <View style={cal.incOverlay}>
-          {/* Dismiss layer — sits behind the dialog box */}
           <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={closeIncomeModal} />
-          {/* Dialog box — sibling of the dismiss layer, not a child, so taps here don't bubble up */}
           <View style={cal.incBox}>
             <Text style={cal.incTitle}>Projected Income</Text>
             <Text style={cal.incDate}>{incomeModal}</Text>
@@ -337,6 +565,98 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
         </View>
       </Modal>
 
+      {/* Expense injection modal */}
+      <Modal visible={expenseModal !== null} transparent animationType="fade" onRequestClose={closeExpenseModal}>
+        <View style={cal.incOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={closeExpenseModal} />
+          <View style={cal.incBox}>
+            <Text style={[cal.incTitle, { color: C.bills }]}>Add Expense</Text>
+            <Text style={cal.incDate}>{expenseModal}</Text>
+            <TextInput style={cal.incInput} value={expenseInput} onChangeText={setExpenseInput}
+              keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={C.faint} autoFocus />
+            <TextInput style={[cal.incInput, { marginTop: 8 }]} value={expenseName} onChangeText={setExpenseName}
+              placeholder="Description (e.g. Groceries)" placeholderTextColor={C.faint} />
+            <View style={cal.incBtns}>
+              <TouchableOpacity style={cal.incCancel} onPress={closeExpenseModal}>
+                <Text style={cal.incCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[cal.incSave, { backgroundColor: C.bills }]} onPress={handleAddExpense}>
+                <Text style={cal.incSaveTxt}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Loan modal */}
+      <Modal visible={loanModal !== null} transparent animationType="fade" onRequestClose={closeLoanModal}>
+        <View style={cal.incOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={closeLoanModal} />
+          <View style={[cal.incBox, { width: 320 }]}>
+            <Text style={[cal.incTitle, { color: '#6366F1' }]}>🏦 Quick Loan</Text>
+            <Text style={cal.incDate}>Income on: {loanModal}</Text>
+            <TextInput style={cal.incInput} value={loanAmount} onChangeText={setLoanAmount}
+              keyboardType="decimal-pad" placeholder="Amount ($)" placeholderTextColor={C.faint} autoFocus />
+            <TextInput style={[cal.incInput, { marginTop: 8 }]} value={loanDesc} onChangeText={setLoanDesc}
+              placeholder="Description" placeholderTextColor={C.faint} />
+            <TextInput style={[cal.incInput, { marginTop: 8 }]} value={loanRepayDate} onChangeText={setLoanRepayDate}
+              placeholder="Repay date (YYYY-MM-DD)" placeholderTextColor={C.faint} />
+            <Text style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>A repayment expense will be added on the repay date.</Text>
+            <View style={cal.incBtns}>
+              <TouchableOpacity style={cal.incCancel} onPress={closeLoanModal}>
+                <Text style={cal.incCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[cal.incSave, { backgroundColor: '#6366F1' }]} onPress={handleAddLoan}>
+                <Text style={cal.incSaveTxt}>Add Loan</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Context menu (right-click on expense chip) */}
+      {contextMenu && (
+        <Modal transparent visible animationType="none" onRequestClose={() => setContextMenu(null)}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setContextMenu(null)} />
+          <View style={[cal.ctxMenu, { top: contextMenu.y, left: contextMenu.x }]}>
+            <TouchableOpacity style={cal.ctxItem} onPress={() => { setDeferModal(contextMenu); setContextMenu(null); }}>
+              <Text style={cal.ctxItemTxt}>📌 Defer this expense</Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
+
+      {/* Defer modal */}
+      <Modal visible={deferModal !== null} transparent animationType="fade" onRequestClose={() => setDeferModal(null)}>
+        <View style={cal.incOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setDeferModal(null)} />
+          <View style={[cal.incBox, { width: 300 }]}>
+            <Text style={[cal.incTitle, { color: '#EF4444' }]}>📌 Defer Expense</Text>
+            <Text style={cal.incDate}>{deferModal?.entry?.name} — ${parseFloat(deferModal?.entry?.amount || 0).toFixed(2)}</Text>
+            <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 10 }}
+              onPress={() => setDeferIndefinite(v => !v)}>
+              <View style={[cal.checkbox, deferIndefinite && cal.checkboxOn]}>
+                {deferIndefinite && <Text style={{ color: '#fff', fontSize: 11 }}>✓</Text>}
+              </View>
+              <Text style={{ fontSize: 14, color: C.text }}>Indefinite (no due date)</Text>
+            </TouchableOpacity>
+            {!deferIndefinite && (
+              <TextInput style={[cal.incInput, { marginTop: 4 }]} value={deferDate} onChangeText={setDeferDate}
+                placeholder="Defer until (YYYY-MM-DD)" placeholderTextColor={C.faint} />
+            )}
+            <View style={cal.incBtns}>
+              <TouchableOpacity style={cal.incCancel} onPress={() => setDeferModal(null)}>
+                <Text style={cal.incCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[cal.incSave, { backgroundColor: '#EF4444' }]} onPress={handleDefer}>
+                <Text style={cal.incSaveTxt}>Defer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+
       {/* Header — zIndex:1 lifts the entire header (including the draggable bag) above the grid cells */}
       <View style={[cal.header, { zIndex: 1 }]}>
         <Text style={[cal.title, isMobile && cal.titleMobile]}>{MONTHS[mo]} {yr}</Text>
@@ -352,6 +672,22 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
               {...bagResponder.panHandlers}
             >
               <Text style={cal.bagEmoji}>💰</Text>
+            </Animated.View>
+          )}
+          {!isMobile && (
+            <Animated.View
+              style={[cal.bagToken, cal.bagTokenExpense, isExpenseDragging && cal.bagDragging, { transform: expenseDragAnim.getTranslateTransform() }]}
+              {...expenseBagResponder.panHandlers}
+            >
+              <Text style={cal.bagEmoji}>💸</Text>
+            </Animated.View>
+          )}
+          {!isMobile && (
+            <Animated.View
+              style={[cal.bagToken, cal.bagTokenLoan, isLoanDragging && cal.bagDragging, { transform: loanDragAnim.getTranslateTransform() }]}
+              {...loanBagResponder.panHandlers}
+            >
+              <Text style={[cal.bagEmoji, { fontSize: 14 }]}>🏦</Text>
             </Animated.View>
           )}
           <TouchableOpacity style={cal.navBtn} onPress={goBack}><Text style={cal.navTxt}>‹</Text></TouchableOpacity>
@@ -374,14 +710,20 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
             const isToday = cell.cur && cell.day === today.getDate() && mo === today.getMonth() && yr === today.getFullYear();
             const events = cell.str ? [...(billsByDate[cell.str] || []), ...(accountEventsByDate[cell.str] || [])] : [];
             const proj = cell.str ? projection[cell.str] : null;
-            const incEntry = cell.str ? projectedIncome[cell.str] : null;
-            const incAmt = incEntry ? (parseFloat(incEntry.amount ?? incEntry) || 0) : 0;
-            const incSource = incEntry?.source || '';
+            const incRaw = cell.str ? projectedIncome[cell.str] : null;
+            const incEntries = incRaw == null ? []
+              : Array.isArray(incRaw) ? incRaw
+              : [{ amount: parseFloat(incRaw.amount ?? incRaw) || 0, source: incRaw.source || '' }];
+            const incAmt = incEntries.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+            const expRaw = cell.str ? (projectedExpenses || {})[cell.str] : null;
+            const expEntries = expRaw == null ? []
+              : Array.isArray(expRaw) ? expRaw
+              : [expRaw];
             const cellDate = cell.str ? new Date(cell.str + 'T00:00:00') : null;
             const isFuture = cell.cur && cellDate && cellDate >= now;
 
             return (
-              <View key={di} style={[cal.cell, isMobile && cal.cellMobile, isToday && cal.cellToday, cell.cur && cell.str === dragOverStr && cal.cellDrop]}>
+              <View key={di} style={[cal.cell, isMobile && cal.cellMobile, isToday && cal.cellToday, cell.cur && cell.str && (cell.str === dragOverStr || cell.str === expenseDragOverStr || cell.str === loanDragOverStr) && cal.cellDrop]}>
                 {/* Day number row + projected end-of-day balance */}
                 <View style={cal.dayNum}>
                   <Text style={[cal.dayTxt, isMobile && cal.dayTxtMobile, !cell.cur && cal.dayMuted, isToday && cal.dayTxtToday]}>
@@ -398,14 +740,37 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
                 {/* Desktop chips */}
                 {!isMobile && (() => {
                   const rows = [];
-                  if (incAmt > 0) rows.push(
-                    <TouchableOpacity key="inc" style={[cal.chip, { backgroundColor: '#DCFCE7' }]}
-                      onPress={() => { setIncomeInput(String(incAmt)); setIncomeSource(incSource); setIncomeModal(cell.str); }}>
-                      <Text style={[cal.chipName, { color: C.income }]} numberOfLines={1}>💰 Income</Text>
-                      <Text style={[cal.chipAmt, { color: C.income }]}>+${incAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
-                    </TouchableOpacity>
-                  );
-                  const slots = 3 - (incAmt > 0 ? 1 : 0);
+                  incEntries.forEach((entry, eidx) => {
+                    const eAmt = parseFloat(entry.amount) || 0;
+                    if (eAmt <= 0) return;
+                    rows.push(
+                      <View key={`inc-${eidx}`} style={[cal.chip, { backgroundColor: '#DCFCE7', flexDirection: 'row', alignItems: 'center' }]}>
+                        <Text style={[cal.chipName, { color: C.income, flex: 1 }]} numberOfLines={1}>💰 {entry.source || 'Income'}</Text>
+                        <Text style={[cal.chipAmt, { color: C.income }]}>+${eAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
+                        <TouchableOpacity onPress={() => handleDeleteIncomeEntry(cell.str, eidx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                          <Text style={{ fontSize: 10, color: C.income, marginLeft: 4, opacity: 0.6 }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  });
+                  expEntries.forEach((entry, eidx) => {
+                    const eAmt = parseFloat(entry.amount) || 0;
+                    if (eAmt <= 0) return;
+                    rows.push(
+                      <View
+                        key={`exp-${eidx}`}
+                        style={[cal.chip, { backgroundColor: '#FEE2E2', flexDirection: 'row', alignItems: 'center' }]}
+                        onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, entry, dateStr: cell.str, entryIdx: eidx }); }}
+                      >
+                        <Text style={[cal.chipName, { color: C.bills, flex: 1 }]} numberOfLines={1}>💸 {entry.name || 'Expense'}</Text>
+                        <Text style={[cal.chipAmt, { color: C.bills }]}>-${eAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
+                        <TouchableOpacity onPress={() => handleDeleteExpenseEntry(cell.str, eidx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                          <Text style={{ fontSize: 10, color: C.bills, marginLeft: 4, opacity: 0.6 }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  });
+                  const slots = 3 - incEntries.length - expEntries.length;
                   events.slice(0, slots).forEach((ev, ei) => {
                     const insuf = proj?.insufficient?.has(ev.id);
                     const textCol = insuf ? C.bills : (CAT_COLOR[ev.category] || C.other);
@@ -617,19 +982,102 @@ function UpcomingBills({ bills }) {
   );
 }
 
+// ─── DeferredItem (animated shaking box) ─────────────────────────────────────
+function DeferredItem({ item, onPress }) {
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const shake = () => Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 5, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -5, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 4, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -4, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
+    ]).start();
+    shake();
+    const id = setInterval(shake, 5000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
+      <Animated.View style={[dfr.box, { transform: [{ translateX: shakeAnim }] }]}>
+        <Text style={dfr.marker}>DEFERRED</Text>
+        <Text style={dfr.name} numberOfLines={2}>{item.name}</Text>
+        <Text style={dfr.amt}>-${parseFloat(item.amount || 0).toFixed(2)}</Text>
+        {item.deferUntil && <Text style={dfr.until}>until {item.deferUntil}</Text>}
+        <Text style={dfr.tapHint}>Tap to pay</Text>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
+function DeferredPanel({ deferredItems, onPay }) {
+  if (!deferredItems || deferredItems.length === 0) return null;
+  return (
+    <View style={[pnl.card, { borderWidth: 1.5, borderColor: '#EF4444' }]}>
+      <View style={pnl.header}>
+        <Text style={[pnl.title, { color: '#EF4444' }]}>⚠️ Deferred Items</Text>
+        <Text style={{ fontSize: 12, color: C.faint }}>{deferredItems.length} item{deferredItems.length !== 1 ? 's' : ''}</Text>
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        {deferredItems.map(item => (
+          <DeferredItem key={item.id} item={item} onPress={() => onPay(item)} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── Countdown hook ───────────────────────────────────────────────────────────
+function useCountdown(dueDate) {
+  const [label, setLabel] = useState('');
+  useEffect(() => {
+    const update = () => {
+      if (!dueDate) { setLabel(''); return; }
+      const now = new Date();
+      const due = new Date(dueDate + 'T23:59:59');
+      const diff = due - now;
+      if (diff <= 0) { setLabel('OVERDUE'); return; }
+      const days = Math.floor(diff / 86400000);
+      const hours = Math.floor((diff % 86400000) / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      if (days > 0) setLabel(`${days}d ${hours}h left`);
+      else if (hours > 0) setLabel(`${hours}h ${mins}m left`);
+      else setLabel(`${mins}m left`);
+    };
+    update();
+    const id = setInterval(update, 30000);
+    return () => clearInterval(id);
+  }, [dueDate]);
+  return label;
+}
+
+function TimeSensitiveTask({ task, onToggle, onDelete }) {
+  const countdown = useCountdown(task.dueDate);
+  const isOverdue = countdown === 'OVERDUE';
+  return (
+    <TouchableOpacity style={[trk.urgentBox, isOverdue && trk.urgentBoxOverdue]}
+      onPress={() => onToggle(task.id, task.completed)} activeOpacity={0.8}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={[trk.urgentTitle, task.completed && trk.taskDone]} numberOfLines={2}>{task.title}</Text>
+        <TouchableOpacity onPress={() => onDelete(task.id)} style={trk.delBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={trk.delTxt}>×</Text>
+        </TouchableOpacity>
+      </View>
+      {countdown ? (
+        <View style={[trk.countdownBadge, isOverdue && trk.countdownOverdue]}>
+          <Text style={[trk.countdownTxt, isOverdue && { color: '#fff' }]}>⏱ {countdown}</Text>
+        </View>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
 // ─── TaskTracker ──────────────────────────────────────────────────────────────
 function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
   const [showAdd, setShowAdd] = useState(false);
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
-
-  const spinAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.timing(spinAnim, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: false })
-    ).start();
-  }, []);
-  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const [timeSensitive, setTimeSensitive] = useState(false);
 
   const fmtDue = (dateStr) => {
     if (!dateStr) return null;
@@ -643,14 +1091,17 @@ function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
 
   const handleAdd = async () => {
     if (!title.trim()) return;
-    await onAdd({ title: title.trim(), dueDate: dueDate || null });
-    setTitle(''); setDueDate(''); setShowAdd(false);
+    await onAdd({ title: title.trim(), dueDate: dueDate || null, timeSensitive });
+    setTitle(''); setDueDate(''); setTimeSensitive(false); setShowAdd(false);
   };
 
+  const urgentTasks = tasks.filter(t => t.timeSensitive && !t.completed);
+  const regularTasks = tasks.filter(t => !t.timeSensitive || t.completed);
+
   return (
-    <View style={trk.card}>
+    <View style={[trk.card, { borderWidth: 1, borderColor: C.border }]}>
       <View style={trk.header}>
-        <Text style={trk.title}>Tracking</Text>
+        <Text style={trk.title}>📋 Tracking</Text>
         <TouchableOpacity onPress={() => setShowAdd(v => !v)}>
           <Text style={trk.addTxt}>+ Add Item</Text>
         </TouchableOpacity>
@@ -662,41 +1113,59 @@ function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
             onChangeText={setTitle} placeholderTextColor={C.faint} />
           <TextInput style={trk.input} placeholder="Due date (YYYY-MM-DD)" value={dueDate}
             onChangeText={setDueDate} placeholderTextColor={C.faint} />
+          <TouchableOpacity style={trk.tsRow} onPress={() => setTimeSensitive(v => !v)} activeOpacity={0.7}>
+            <View style={[trk.checkbox, timeSensitive && trk.checkboxOn]}>
+              {timeSensitive && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>✓</Text>}
+            </View>
+            <Text style={[trk.tsLabel, timeSensitive && { color: '#EF4444' }]}>⚡ Time Sensitive</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={trk.saveBtn} onPress={handleAdd}>
             <Text style={trk.saveTxt}>Add Task</Text>
           </TouchableOpacity>
         </View>
       )}
 
+      {/* Time-sensitive tasks at top */}
+      {urgentTasks.length > 0 && (
+        <View style={trk.urgentSection}>
+          <Text style={trk.sectionLabel}>⚡ URGENT</Text>
+          {urgentTasks.map(task => (
+            <TimeSensitiveTask key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} />
+          ))}
+        </View>
+      )}
+
+      {/* Regular tasks */}
+      {regularTasks.length > 0 && (
+        <View style={regularTasks.length > 0 && urgentTasks.length > 0 ? trk.regularSection : {}}>
+          {urgentTasks.length > 0 && <Text style={[trk.sectionLabel, { color: C.muted }]}>TASKS</Text>}
+          {regularTasks.map(task => {
+            const dueLbl = fmtDue(task.dueDate);
+            return (
+              <TouchableOpacity key={task.id} style={trk.row}
+                onPress={() => onToggle(task.id, task.completed)} activeOpacity={0.7}>
+                <Text style={[trk.taskTitle, task.completed && trk.taskDone]} numberOfLines={1}>
+                  {task.title}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {dueLbl && (
+                    <View style={[trk.dueBadge, task.completed && trk.dueBadgeDone]}>
+                      <Text style={[trk.dueTxt, task.completed && trk.dueTxtDone]}>{dueLbl}</Text>
+                    </View>
+                  )}
+                  <TouchableOpacity onPress={() => onDelete(task.id)} style={trk.delBtn}>
+                    <Text style={trk.delTxt}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
       {tasks.length === 0 && !showAdd && (
         <Text style={trk.empty}>No tasks yet. Tap "+ Add Item" to start.</Text>
       )}
-
-      {tasks.map(task => {
-        const dueLbl = fmtDue(task.dueDate);
-        return (
-          <TouchableOpacity key={task.id} style={trk.row}
-            onPress={() => onToggle(task.id, task.completed)} activeOpacity={0.7}>
-            <Text style={[trk.taskTitle, task.completed && trk.taskDone]} numberOfLines={1}>
-              {task.title}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              {dueLbl && (
-                <View style={[trk.dueBadge, task.completed && trk.dueBadgeDone]}>
-                  <Text style={[trk.dueTxt, task.completed && trk.dueTxtDone]}>{dueLbl}</Text>
-                </View>
-              )}
-              <TouchableOpacity onPress={() => onDelete(task.id)} style={trk.delBtn}>
-                <Text style={trk.delTxt}>×</Text>
-              </TouchableOpacity>
-              {/* spinner — TODO: fix animation on web
-              <Animated.View style={[trk.spinnerWrap, { transform: [{ rotate: spin }] }]}>
-                <IconView icon={ICONS.spinner} size={18} />
-              </Animated.View> */}
-            </View>
-          </TouchableOpacity>
-        );
-      })}
     </View>
   );
 }
@@ -765,9 +1234,24 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome } = useApp();
+  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+  const [payDeferModal, setPayDeferModal] = useState(null);
+  const [payDeferDate, setPayDeferDate] = useState('');
+
+  const handlePayDeferred = () => {
+    if (!payDeferModal || !payDeferDate) return;
+    const newDeferred = (deferredItems || []).filter(d => d.id !== payDeferModal.id);
+    saveDeferredItems(newDeferred);
+    const newExp = { ...(projectedExpenses || {}) };
+    const raw = newExp[payDeferDate];
+    const existing = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    newExp[payDeferDate] = [...existing, { amount: payDeferModal.amount, name: payDeferModal.name }];
+    saveProjectedExpenses(newExp);
+    setPayDeferModal(null);
+    setPayDeferDate('');
+  };
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -793,8 +1277,9 @@ export default function DashboardScreen() {
       {isMobile ? (
         // ── Mobile: Calendar → Banks → Tasks → Car → Phone → Loans → Credit Cards → Upcoming ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
+          <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Car" footerColor={C.bills} />
           <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Phone" footerColor={C.bills} />
@@ -807,11 +1292,12 @@ export default function DashboardScreen() {
         // ── Desktop: two-column ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} />
+            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
             <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+            <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
             <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
             <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} />
             <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Loans" footerColor={C.bills} />
@@ -821,6 +1307,28 @@ export default function DashboardScreen() {
           </View>
         </View>
       )}
+
+      {/* Pay deferred modal (dashboard level) */}
+      <Modal visible={payDeferModal !== null} transparent animationType="fade" onRequestClose={() => setPayDeferModal(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setPayDeferModal(null)} />
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: 300, shadowColor: '#000', shadowOffset:{width:0,height:4}, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, marginBottom: 4 }}>Schedule Payment</Text>
+            <Text style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>{payDeferModal?.name} — ${parseFloat(payDeferModal?.amount || 0).toFixed(2)}</Text>
+            <TextInput style={{ borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: C.text, backgroundColor: '#FAFAFA' }}
+              value={payDeferDate} onChangeText={setPayDeferDate}
+              placeholder="Payment date (YYYY-MM-DD)" placeholderTextColor={C.faint} autoFocus />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <TouchableOpacity style={{ flex: 1, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingVertical: 10, alignItems: 'center' }} onPress={() => setPayDeferModal(null)}>
+                <Text style={{ fontSize: 14, color: C.muted, fontWeight: '500' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ flex: 1, backgroundColor: C.primary, borderRadius: 10, paddingVertical: 10, alignItems: 'center' }} onPress={handlePayDeferred}>
+                <Text style={{ fontSize: 14, color: '#fff', fontWeight: '700' }}>Schedule</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </ScrollView>
   );
@@ -877,8 +1385,15 @@ const cal = StyleSheet.create({
   chipInsuf: { borderWidth: 1, borderColor: C.bills },
   warnTxt: { fontSize: 10, color: C.bills },
   bagToken: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center', backgroundColor: '#DCFCE7', cursor: 'grab', zIndex: 100, elevation: 5 },
+  bagTokenExpense: { backgroundColor: '#FEE2E2' },
+  bagTokenLoan: { backgroundColor: '#EDE9FE' },
   bagDragging: { opacity: 0.9, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 20, cursor: 'grabbing', zIndex: 9999 },
   bagEmoji: { fontSize: 18 },
+  ctxMenu: { position: 'absolute', backgroundColor: '#fff', borderRadius: 10, padding: 4, shadowColor: '#000', shadowOffset: {width:0,height:4}, shadowOpacity: 0.18, shadowRadius: 12, elevation: 12, minWidth: 180, zIndex: 9999 },
+  ctxItem: { paddingHorizontal: 14, paddingVertical: 10 },
+  ctxItemTxt: { fontSize: 14, color: C.text, fontWeight: '500' },
+  checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 2, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+  checkboxOn: { backgroundColor: '#EF4444', borderColor: '#EF4444' },
   incOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   incBox: { backgroundColor: '#fff', borderRadius: 16, padding: 20, width: 280, shadowColor: '#000', shadowOffset: {width:0,height:4}, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 },
   incTitle: { fontSize: 16, fontWeight: '700', color: C.text, marginBottom: 2 },
@@ -941,12 +1456,15 @@ const trk = StyleSheet.create({
   addTxt: { fontSize: 13, color: C.primary, fontWeight: '600' },
   addForm: { backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, marginBottom: 10, gap: 8 },
   input: { backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, color: C.text },
+  tsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  tsLabel: { fontSize: 13, color: C.muted, fontWeight: '600' },
+  checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 2, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+  checkboxOn: { backgroundColor: '#EF4444', borderColor: '#EF4444' },
   saveBtn: { backgroundColor: C.primary, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
   saveTxt: { color: '#fff', fontWeight: '600', fontSize: 14 },
   empty: { fontSize: 13, color: C.faint, textAlign: 'center', paddingVertical: 14 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', gap: 10 },
   taskTitle: { flex: 1, fontSize: 14, color: C.text, fontWeight: '500' },
-  spinnerWrap: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
   taskDone: { textDecorationLine: 'line-through', color: C.faint },
   dueBadge: { backgroundColor: '#EEF2FF', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 },
   dueBadgeDone: { backgroundColor: '#F3F4F6' },
@@ -954,6 +1472,24 @@ const trk = StyleSheet.create({
   dueTxtDone: { color: C.faint },
   delBtn: { padding: 4 },
   delTxt: { fontSize: 18, color: C.faint, lineHeight: 20 },
+  urgentSection: { marginBottom: 10 },
+  regularSection: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 10, marginTop: 4 },
+  sectionLabel: { fontSize: 10, fontWeight: '800', color: '#EF4444', letterSpacing: 1, marginBottom: 8 },
+  urgentBox: { backgroundColor: '#FFF7F7', borderWidth: 1.5, borderColor: '#EF4444', borderRadius: 12, padding: 12, marginBottom: 8 },
+  urgentBoxOverdue: { backgroundColor: '#FEE2E2' },
+  urgentTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: C.text },
+  countdownBadge: { backgroundColor: '#FEE2E2', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, marginTop: 6, alignSelf: 'flex-start' },
+  countdownOverdue: { backgroundColor: '#EF4444' },
+  countdownTxt: { fontSize: 12, fontWeight: '700', color: '#EF4444' },
+});
+
+const dfr = StyleSheet.create({
+  box: { backgroundColor: '#1F2937', borderRadius: 12, padding: 12, width: 130, borderWidth: 1.5, borderColor: '#EF4444' },
+  marker: { fontSize: 8, fontWeight: '800', color: '#EF4444', letterSpacing: 1.5, marginBottom: 4 },
+  name: { fontSize: 13, fontWeight: '600', color: '#fff', marginBottom: 4 },
+  amt: { fontSize: 15, fontWeight: '700', color: '#EF4444' },
+  until: { fontSize: 10, color: '#9CA3AF', marginTop: 3 },
+  tapHint: { fontSize: 9, color: '#6B7280', marginTop: 6, textAlign: 'right' },
 });
 
 const mds = StyleSheet.create({

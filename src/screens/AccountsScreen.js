@@ -59,12 +59,15 @@ const SUGGESTED_FIELDS = {
   other:        [{ label: 'Amount', type: 'currency' }],
 };
 
+const BANK_TYPES = ['checking', 'savings'];
+const CREDIT_TYPES = ['credit'];
+
 function makeId() {
   return Math.random().toString(36).slice(2, 9);
 }
 
 // ─── Add/Edit Account Modal ───────────────────────────────────────────────────
-function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
+function AccountModal({ visible, onClose, onSave, existing, isMobile, bankAccounts = [] }) {
   const isEdit = !!existing;
   const typeObj = existing ? ACCT_TYPES.find(t => t.id === existing.type) : null;
 
@@ -74,6 +77,7 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
   const [color, setColor] = useState(existing?.color || PALETTE[0]);
   const [icon, setIcon] = useState(existing?.icon || '');
   const [fields, setFields] = useState(existing?.fields || []);
+  const [linkedBankId, setLinkedBankId] = useState(existing?.linkedBankId || null);
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [newFieldType, setNewFieldType] = useState('currency');
 
@@ -107,6 +111,7 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
       color,
       icon: icon || typeInfo?.icon || '🏦',
       fields,
+      linkedBankId: type === 'credit' ? linkedBankId : null,
     });
     onClose();
   };
@@ -166,6 +171,29 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
               onChangeText={setIcon}
               placeholderTextColor={C.faint}
             />
+
+            {type === 'credit' && bankAccounts.length > 0 && (
+              <>
+                <Text style={m.label}>Draws from (bank account)</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[m.typeBtn, linkedBankId === null && m.typeBtnActive]}
+                    onPress={() => setLinkedBankId(null)}
+                  >
+                    <Text style={[m.typeTxt, linkedBankId === null && m.typeTxtActive]}>None</Text>
+                  </TouchableOpacity>
+                  {bankAccounts.map(bank => (
+                    <TouchableOpacity
+                      key={bank.id}
+                      style={[m.typeBtn, linkedBankId === bank.id && m.typeBtnActive]}
+                      onPress={() => setLinkedBankId(bank.id)}
+                    >
+                      <Text style={[m.typeTxt, linkedBankId === bank.id && m.typeTxtActive]}>{bank.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
 
             {/* Color */}
             <Text style={m.label}>Color</Text>
@@ -263,7 +291,7 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile }) {
 }
 
 // ─── Account Card ─────────────────────────────────────────────────────────────
-function AccountCard({ account, onEdit, onDelete, onLinkBank, color, isMobile }) {
+function AccountCard({ account, onEdit, onDelete, onLinkBank, color, isMobile, bankAccounts = [] }) {
   const isLinked = !!account.plaidLinked;
   return (
     <View style={[c.card, isMobile && c.cardMobile]}>
@@ -292,6 +320,13 @@ function AccountCard({ account, onEdit, onDelete, onLinkBank, color, isMobile })
                 </View>
               ))}
             </View>
+          )}
+          {account.type === 'credit' && bankAccounts.length > 0 && (
+            <Text style={c.drawsFrom}>
+              {account.linkedBankId
+                ? `Draws from: ${bankAccounts.find(b => b.id === account.linkedBankId)?.name || 'Unknown'}`
+                : 'No bank linked'}
+            </Text>
           )}
         </View>
       </View>
@@ -393,18 +428,34 @@ export default function AccountsScreen() {
         </View>
       )}
 
-      {/* Account list */}
-      {accounts.map((account, idx) => (
-        <AccountCard
-          key={account.id}
-          account={account}
-          color={account.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
-          onEdit={() => setEditingAccount(account)}
-          onDelete={() => handleDelete(account)}
-          onLinkBank={() => handleLinkBank(account)}
-          isMobile={isMobile}
-        />
-      ))}
+      {/* Account list — grouped: Banks → Credit Cards → Other */}
+      {(() => {
+        const banks = accounts.filter(a => BANK_TYPES.includes(a.type));
+        const credits = accounts.filter(a => CREDIT_TYPES.includes(a.type));
+        const others = accounts.filter(a => !BANK_TYPES.includes(a.type) && !CREDIT_TYPES.includes(a.type));
+        const groups = [
+          { label: '🏦 Banks', items: banks },
+          { label: '💳 Credit Cards', items: credits },
+          { label: '📂 Other', items: others },
+        ].filter(g => g.items.length > 0);
+        return groups.map(group => (
+          <View key={group.label} style={{ marginBottom: 8 }}>
+            <Text style={sc.groupLabel}>{group.label}</Text>
+            {group.items.map((account, idx) => (
+              <AccountCard
+                key={account.id}
+                account={account}
+                color={account.color || ACCT_COLORS[accounts.indexOf(account) % ACCT_COLORS.length]}
+                onEdit={() => setEditingAccount(account)}
+                onDelete={() => handleDelete(account)}
+                onLinkBank={() => handleLinkBank(account)}
+                isMobile={isMobile}
+                bankAccounts={banks}
+              />
+            ))}
+          </View>
+        ));
+      })()}
 
       {/* Modals */}
       <AccountModal
@@ -413,6 +464,7 @@ export default function AccountsScreen() {
         onSave={handleAdd}
         existing={null}
         isMobile={isMobile}
+        bankAccounts={accounts.filter(a => ['checking','savings'].includes(a.type))}
       />
       {editingAccount && (
         <AccountModal
@@ -421,6 +473,7 @@ export default function AccountsScreen() {
           onSave={handleEdit}
           existing={editingAccount}
           isMobile={isMobile}
+          bankAccounts={accounts.filter(a => ['checking','savings'].includes(a.type))}
         />
       )}
     </ScrollView>
@@ -447,6 +500,7 @@ const sc = StyleSheet.create({
   emptyMsg: { fontSize: 15, color: C.muted, textAlign: 'center', maxWidth: 360, lineHeight: 22, marginBottom: 28 },
   emptyBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 28 },
   emptyBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  groupLabel: { fontSize: 13, fontWeight: '700', color: C.muted, marginBottom: 8, marginTop: 4, letterSpacing: 0.5, textTransform: 'uppercase' },
 });
 
 const c = StyleSheet.create({
@@ -474,6 +528,7 @@ const c = StyleSheet.create({
   editTxt: { fontSize: 13, color: C.primary, fontWeight: '600' },
   delBtn: { borderWidth: 1, borderColor: '#FEE2E2', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#FEF2F2' },
   delTxt: { fontSize: 13, color: C.bills, fontWeight: '600' },
+  drawsFrom: { fontSize: 11, color: C.faint, marginTop: 4, fontStyle: 'italic' },
 });
 
 const m = StyleSheet.create({

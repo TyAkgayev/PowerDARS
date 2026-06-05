@@ -25,6 +25,8 @@ export function AppProvider({ children }) {
   const [driverProfile, setDriverProfile] = useState({ points: '', tickets: '', courts: '' });
   const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
   const [workSchedule, setWorkSchedule] = useState({});
+  const [projectedExpenses, setProjectedExpenses] = useState({});
+  const [deferredItems, setDeferredItems] = useState([]);
 
   // Accounts listener
   useEffect(() => {
@@ -115,6 +117,22 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'rnProfile'), (snap) => {
       if (snap.exists()) setRNProfile(snap.data());
+    });
+    return unsub;
+  }, []);
+
+  // Projected expenses listener
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'projectedExpenses'), (snap) => {
+      if (snap.exists()) setProjectedExpenses(snap.data().entries || {});
+    });
+    return unsub;
+  }, []);
+
+  // Deferred items listener
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'deferredItems'), (snap) => {
+      if (snap.exists()) setDeferredItems(snap.data().items || []);
     });
     return unsub;
   }, []);
@@ -213,6 +231,14 @@ export function AppProvider({ children }) {
     await setDoc(doc(db, 'settings', 'projectedIncome'), { entries });
   }, []);
 
+  const saveProjectedExpenses = useCallback(async (entries) => {
+    await setDoc(doc(db, 'settings', 'projectedExpenses'), { entries });
+  }, []);
+
+  const saveDeferredItems = useCallback(async (items) => {
+    await setDoc(doc(db, 'settings', 'deferredItems'), { items });
+  }, []);
+
   // — Settings —
   const saveUserName = useCallback(async (name) => {
     await setDoc(doc(db, 'settings', 'app'), { userName: name }, { merge: true });
@@ -222,6 +248,8 @@ export function AppProvider({ children }) {
     <AppContext.Provider value={{
       accounts, bills, tasks, darsHistory, loading,
       projectedIncome, saveProjectedIncome,
+      projectedExpenses, saveProjectedExpenses,
+      deferredItems, saveDeferredItems,
       currentScreen, setCurrentScreen,
       userName, saveUserName,
       addAccount, updateAccount, deleteAccount,

@@ -21,6 +21,7 @@ const SHIFTS = [
   { id: '8pm-8am',   label: '8pm – 8am',   start: 20, color: '#8B5CF6' },
   { id: '3pm-11pm',  label: '3pm – 11pm',  start: 15, color: '#F59E0B' },
   { id: '7am-3pm',   label: '7am – 3pm',   start: 7,  color: '#22C55E' },
+  { id: '7am-7pm',   label: '7am – 7pm',   start: 7,  color: '#10B981' },
   { id: '11pm-7am',  label: '11pm – 7am',  start: 23, color: '#EF4444' },
 ];
 
@@ -71,7 +72,7 @@ function PhoneModal({ visible, currentPhone, onSave, onClose }) {
 }
 
 // ─── Calendar Day Cell ───────────────────────────────────────────────────────
-function DayCell({ day, year, month, entry, activeShift, location, onPress, onDelete, isMobile }) {
+function DayCell({ day, year, month, entry, activeShift, location, onPress, onDelete, isMobile, isToday }) {
   const shift = entry ? getShiftById(entry.shift) : null;
   const isEmpty = !entry;
   const isClickable = !!activeShift;
@@ -83,6 +84,7 @@ function DayCell({ day, year, month, entry, activeShift, location, onPress, onDe
         isMobile && dc.cellMobile,
         isClickable && isEmpty && dc.cellClickable,
         !day && dc.cellEmpty,
+        isToday && dc.cellToday,
       ]}
       onPress={() => day && onPress(day)}
       activeOpacity={day ? 0.7 : 1}
@@ -90,7 +92,7 @@ function DayCell({ day, year, month, entry, activeShift, location, onPress, onDe
     >
       {day ? (
         <>
-          <Text style={[dc.dayNum, shift && { color: shift.color }]}>{day}</Text>
+          <Text style={[dc.dayNum, shift && { color: shift.color }, isToday && dc.dayNumToday]}>{day}</Text>
           {shift && (
             <View style={[dc.shiftTag, { backgroundColor: shift.color + '20', borderColor: shift.color }]}>
               <Text style={[dc.shiftTxt, { color: shift.color }]} numberOfLines={1}>
@@ -252,6 +254,7 @@ export default function WorkScreen() {
           {cells.map((day, i) => {
             const ds = day ? dateStr(year, month, day) : null;
             const entry = ds ? workSchedule[ds] : null;
+            const isTodayCell = !!day && day === today.getDate() && year === today.getFullYear() && month === today.getMonth();
             return (
               <View key={i} style={[s.cellWrapper, isMobile && s.cellWrapperMobile]}>
                 <DayCell
@@ -264,6 +267,7 @@ export default function WorkScreen() {
                   onPress={handleDayPress}
                   onDelete={handleDelete}
                   isMobile={isMobile}
+                  isToday={isTodayCell}
                 />
               </View>
             );
@@ -369,6 +373,8 @@ const dc = StyleSheet.create({
   xBtn: { position: 'absolute', top: 2, right: 2 },
   xTxt: { fontSize: 10, fontWeight: '700' },
   addHint: { fontSize: 18, color: C.primary, textAlign: 'center', marginTop: 4, opacity: 0.4 },
+  cellToday: { backgroundColor: '#EEF2FF', borderTopWidth: 2, borderTopColor: '#4361EE' },
+  dayNumToday: { color: '#4361EE', fontWeight: '800' },
 });
 
 const m = StyleSheet.create({

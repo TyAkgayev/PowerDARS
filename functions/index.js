@@ -17,7 +17,7 @@ const TWILIO_AUTH_TOKEN    = defineSecret('TWILIO_AUTH_TOKEN');
 const TWILIO_FROM_NUMBER   = defineSecret('TWILIO_FROM_NUMBER');
 
 // Plaid environment: 'sandbox' | 'development' | 'production'
-const PLAID_ENV = 'development';
+const PLAID_ENV = 'production';
 
 function getPlaidClient(clientId, secret) {
   return new PlaidApi(new Configuration({
@@ -266,6 +266,7 @@ const SHIFT_START_HOURS = {
   '8pm-8am':  20,
   '3pm-11pm': 15,
   '7am-3pm':  7,
+  '7am-7pm':  7,
   '11pm-7am': 23,
 };
 
