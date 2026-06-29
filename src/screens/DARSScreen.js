@@ -20,6 +20,15 @@ const C = {
 
 const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
 
+const ACCOUNT_GROUPS = [
+  { title: 'Banks',        types: ['checking', 'savings', 'investment'] },
+  { title: 'Credit Cards', types: ['credit'] },
+  { title: 'Car',          types: ['car_lease', 'car_insurance'] },
+  { title: 'Phone',        types: ['phone'] },
+  { title: 'Loans',        types: ['loan'] },
+  { title: 'Other',        types: ['utility', 'subscription', 'other'] },
+];
+
 function todayReadable() {
   return new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 }
@@ -131,26 +140,36 @@ function SubmittedView({ darsEntry, accounts, onEdit }) {
         {darsEntry?.submittedAt ? 'Submitted successfully' : 'Saved'}
       </Text>
 
-      {accounts.map((acc, idx) => {
-        const col = acc.color || ACCT_COLORS[idx % ACCT_COLORS.length];
+      {ACCOUNT_GROUPS.map(group => {
+        const groupAccts = accounts.filter(a => group.types.includes(a.type));
+        if (groupAccts.length === 0) return null;
         return (
-          <View key={acc.id} style={sv.card}>
-            <View style={sv.cardHeader}>
-              <View style={[sv.icon, { backgroundColor: col + '20' }]}>
-                <Text style={sv.iconTxt}>{acc.icon || '🏦'}</Text>
-              </View>
-              <Text style={sv.acctName}>{acc.name}</Text>
-            </View>
-            {(acc.fields || []).map(field => {
-              const val = getVal(acc.id, field.id);
+          <View key={group.title}>
+            <Text style={sv.groupHeader}>{group.title}</Text>
+            {groupAccts.map((acc, gi) => {
+              const idx = accounts.indexOf(acc);
+              const col = acc.color || ACCT_COLORS[idx % ACCT_COLORS.length];
               return (
-                <View key={field.id} style={sv.row}>
-                  <Text style={sv.fieldLabel}>{field.label}</Text>
-                  <Text style={[sv.fieldVal, field.type === 'currency' && val < 0 && { color: C.bills }]}>
-                    {field.type === 'currency' && val !== undefined
-                      ? (val < 0 ? `-$${Math.abs(val).toLocaleString('en-US', {minimumFractionDigits:2})}` : `$${parseFloat(val || 0).toLocaleString('en-US', {minimumFractionDigits:2})}`)
-                      : val !== undefined ? String(val) : '—'}
-                  </Text>
+                <View key={acc.id} style={sv.card}>
+                  <View style={sv.cardHeader}>
+                    <View style={[sv.icon, { backgroundColor: col + '20' }]}>
+                      <Text style={sv.iconTxt}>{acc.icon || '🏦'}</Text>
+                    </View>
+                    <Text style={sv.acctName}>{acc.name}</Text>
+                  </View>
+                  {(acc.fields || []).map(field => {
+                    const val = getVal(acc.id, field.id);
+                    return (
+                      <View key={field.id} style={sv.row}>
+                        <Text style={sv.fieldLabel}>{field.label}</Text>
+                        <Text style={[sv.fieldVal, field.type === 'currency' && val < 0 && { color: C.bills }]}>
+                          {field.type === 'currency' && val !== undefined
+                            ? (val < 0 ? `-$${Math.abs(val).toLocaleString('en-US', {minimumFractionDigits:2})}` : `$${parseFloat(val || 0).toLocaleString('en-US', {minimumFractionDigits:2})}`)
+                            : val !== undefined ? String(val) : '—'}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </View>
               );
             })}
@@ -240,16 +259,28 @@ export default function DARSScreen() {
             </Text>
           </View>
 
-          {accounts.map((acc, idx) => (
-            <AccountEntry
-              key={acc.id}
-              account={acc}
-              values={values[acc.id]}
-              onChange={(fieldId, val) => handleChange(acc.id, fieldId, val)}
-              color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
-              isMobile={isMobile}
-            />
-          ))}
+          {ACCOUNT_GROUPS.map(group => {
+            const groupAccts = accounts.filter(a => group.types.includes(a.type));
+            if (groupAccts.length === 0) return null;
+            return (
+              <View key={group.title}>
+                <Text style={s.groupHeader}>{group.title}</Text>
+                {groupAccts.map(acc => {
+                  const idx = accounts.indexOf(acc);
+                  return (
+                    <AccountEntry
+                      key={acc.id}
+                      account={acc}
+                      values={values[acc.id]}
+                      onChange={(fieldId, val) => handleChange(acc.id, fieldId, val)}
+                      color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
+                      isMobile={isMobile}
+                    />
+                  );
+                })}
+              </View>
+            );
+          })}
 
           <View style={s.footer}>
             {editMode && (
@@ -312,6 +343,7 @@ const s = StyleSheet.create({
   submitBtn: { flex: 1, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 16, alignItems: 'center' },
   submitBtnDisabled: { opacity: 0.6 },
   submitTxt: { fontSize: 16, color: '#fff', fontWeight: '700' },
+  groupHeader: { fontSize: 12, fontWeight: '700', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 8, marginBottom: 10 },
   emptyState: { alignItems: 'center', paddingVertical: 60 },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { fontSize: 22, fontWeight: '700', color: C.text, marginBottom: 8 },
@@ -322,6 +354,7 @@ const s = StyleSheet.create({
 
 const sv = StyleSheet.create({
   container: {},
+  groupHeader: { fontSize: 12, fontWeight: '700', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 8, marginBottom: 10 },
   successBadge: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#ECFDF5', borderRadius: 12, padding: 16, marginBottom: 8 },
   successIcon: { fontSize: 20, color: '#22C55E' },
   successTxt: { fontSize: 16, color: '#22C55E', fontWeight: '700' },
