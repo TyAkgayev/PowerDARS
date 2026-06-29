@@ -1237,6 +1237,7 @@ export default function DashboardScreen() {
   const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+  const isNarrow = width < 1100;
   const [payDeferModal, setPayDeferModal] = useState(null);
   const [payDeferDate, setPayDeferDate] = useState('');
 
@@ -1273,9 +1274,9 @@ export default function DashboardScreen() {
         </View>
       </View>
 
-      {/* Body — row on desktop, column on mobile */}
+      {/* Body — row on wide desktop, stacked on narrow/mobile */}
       {isMobile ? (
-        // ── Mobile: Calendar → Banks → Tasks → Car → Phone → Loans → Credit Cards → Upcoming ──
+        // ── Mobile: full mobile layout ──
         <View style={s.colStack}>
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
@@ -1288,8 +1289,22 @@ export default function DashboardScreen() {
           <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Other" footerColor={C.bills} />
           <UpcomingBills bills={bills} />
         </View>
+      ) : isNarrow ? (
+        // ── Narrow desktop: calendar full-width on top, panels stacked below ──
+        <View style={s.colStack}>
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
+          <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+          <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
+          <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
+          <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} />
+          <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Loans" footerColor={C.bills} />
+          <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Credit" footerColor={C.bills} />
+          <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Other" footerColor={C.bills} />
+          <UpcomingBills bills={bills} />
+        </View>
       ) : (
-        // ── Desktop: two-column ──
+        // ── Wide desktop: two-column side-by-side ──
         <View style={s.body}>
           <View style={s.left}>
             <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
