@@ -982,6 +982,110 @@ function UpcomingBills({ bills }) {
   );
 }
 
+// ─── MonthlyBillsTracker ──────────────────────────────────────────────────────
+function MonthlyBillsTracker({ bills, billPayments, onTogglePaid }) {
+  const today = new Date();
+  const todayDay = today.getDate();
+  const yearMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const monthName = MONTHS[today.getMonth()];
+
+  const monthBills = useMemo(() =>
+    [...bills]
+      .filter(b => b.dueDate && b.dueDate.startsWith(yearMonth))
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
+    [bills, yearMonth]
+  );
+
+  const paidIds = useMemo(() => new Set((billPayments || {})[yearMonth] || []), [billPayments, yearMonth]);
+
+  // Index to insert TODAY line: first bill with day >= todayDay
+  const todayLineAt = useMemo(() => {
+    const idx = monthBills.findIndex(b => parseInt(b.dueDate.split('-')[2], 10) >= todayDay);
+    return idx === -1 ? monthBills.length : idx;
+  }, [monthBills, todayDay]);
+
+  const totalOwed = useMemo(() =>
+    monthBills.filter(b => b.category !== 'income').reduce((s, b) => s + Math.abs(b.amount || 0), 0),
+    [monthBills]
+  );
+  const paidOwed = useMemo(() =>
+    monthBills.filter(b => b.category !== 'income' && paidIds.has(b.id)).reduce((s, b) => s + Math.abs(b.amount || 0), 0),
+    [monthBills, paidIds]
+  );
+
+  const TodayDivider = () => (
+    <View style={mbt.todayLine}>
+      <View style={mbt.todayBar} />
+      <Text style={mbt.todayTxt}>TODAY</Text>
+      <View style={mbt.todayBar} />
+    </View>
+  );
+
+  return (
+    <View style={mbt.card}>
+      <View style={mbt.header}>
+        <Text style={mbt.title}>{monthName} Bills</Text>
+        <View style={mbt.headerRight}>
+          <Text style={mbt.paidCount}>{paidIds.size}/{monthBills.length} paid</Text>
+          {totalOwed > 0 && (
+            <Text style={mbt.paidAmt}>${paidOwed.toFixed(0)}/${totalOwed.toFixed(0)}</Text>
+          )}
+        </View>
+      </View>
+
+      {monthBills.length === 0 ? (
+        <>
+          <TodayDivider />
+          <Text style={mbt.empty}>No bills scheduled for {monthName}.</Text>
+        </>
+      ) : (
+        <>
+          {todayLineAt === 0 && <TodayDivider />}
+          {monthBills.map((bill, idx) => {
+            const day = parseInt(bill.dueDate.split('-')[2], 10);
+            const isPast = day < todayDay;
+            const isToday = day === todayDay;
+            const isPaid = paidIds.has(bill.id);
+            const isOverdue = isPast && !isPaid;
+
+            return (
+              <React.Fragment key={bill.id}>
+                <TouchableOpacity
+                  style={[mbt.billRow, isOverdue && mbt.billRowOverdue, isPaid && mbt.billRowPaid]}
+                  onPress={() => onTogglePaid(bill.id, yearMonth)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[mbt.checkbox, isPaid && mbt.checkboxDone, isOverdue && mbt.checkboxOverdue]}>
+                    {isPaid && <Text style={mbt.checkmark}>✓</Text>}
+                  </View>
+                  <View style={mbt.billInfo}>
+                    <Text style={[mbt.billName, isPaid && mbt.billNameDone, isOverdue && mbt.billNameOverdue]}>
+                      {bill.icon ? `${bill.icon} ` : ''}{bill.name}
+                    </Text>
+                    <Text style={[mbt.billDue, isOverdue && { color: C.bills }, isToday && { color: C.reminder, fontWeight: '600' }]}>
+                      {isToday ? 'Due today' : isPast ? `Was due ${monthName.slice(0,3)} ${day}` : `Due ${monthName.slice(0,3)} ${day}`}
+                    </Text>
+                  </View>
+                  <Text style={[
+                    mbt.billAmt,
+                    bill.category === 'income' ? { color: C.income } : { color: C.text },
+                    isOverdue && { color: C.bills },
+                    isPaid && { color: C.faint },
+                  ]}>
+                    {bill.category === 'income' ? '+' : '-'}${Math.abs(bill.amount || 0).toFixed(2)}
+                  </Text>
+                </TouchableOpacity>
+                {idx + 1 === todayLineAt && idx + 1 < monthBills.length && <TodayDivider />}
+              </React.Fragment>
+            );
+          })}
+          {todayLineAt === monthBills.length && <TodayDivider />}
+        </>
+      )}
+    </View>
+  );
+}
+
 // ─── DeferredItem (animated shaking box) ─────────────────────────────────────
 function DeferredItem({ item, onPress }) {
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -1234,7 +1338,7 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems } = useApp();
+  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const isNarrow = width < 1100;
@@ -1253,6 +1357,14 @@ export default function DashboardScreen() {
     setPayDeferModal(null);
     setPayDeferDate('');
   };
+
+  const handleToggleBillPaid = useCallback((billId, yearMonth) => {
+    const current = (billPayments || {})[yearMonth] || [];
+    const updated = current.includes(billId)
+      ? current.filter(id => id !== billId)
+      : [...current, billId];
+    saveBillPayments({ ...(billPayments || {}), [yearMonth]: updated });
+  }, [billPayments, saveBillPayments]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -1279,6 +1391,7 @@ export default function DashboardScreen() {
         // ── Mobile: full mobile layout ──
         <View style={s.colStack}>
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
+          <MonthlyBillsTracker bills={bills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
@@ -1294,6 +1407,7 @@ export default function DashboardScreen() {
         <View style={s.colStack}>
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
+          <MonthlyBillsTracker bills={bills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
@@ -1311,6 +1425,7 @@ export default function DashboardScreen() {
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
+            <MonthlyBillsTracker bills={bills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
             <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
             <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
             <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
@@ -1426,6 +1541,32 @@ const cal = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendDot: { width: 7, height: 7, borderRadius: 4 },
   legendTxt: { fontSize: 11, color: C.muted },
+});
+
+const mbt = StyleSheet.create({
+  card: { backgroundColor: C.card, borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8, elevation: 3 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  title: { fontSize: 16, fontWeight: '700', color: C.text },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  paidCount: { fontSize: 12, color: C.muted, fontWeight: '500' },
+  paidAmt: { fontSize: 12, color: C.primary, fontWeight: '600' },
+  empty: { fontSize: 13, color: C.faint, textAlign: 'center', paddingVertical: 8 },
+  todayLine: { flexDirection: 'row', alignItems: 'center', marginVertical: 8 },
+  todayBar: { flex: 1, height: 2, backgroundColor: C.primary + '50' },
+  todayTxt: { fontSize: 10, fontWeight: '800', color: C.primary, marginHorizontal: 8, letterSpacing: 1.2 },
+  billRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, borderRadius: 10, marginBottom: 1 },
+  billRowOverdue: { backgroundColor: '#FEF2F2' },
+  billRowPaid: { opacity: 0.55 },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: C.border, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
+  checkboxDone: { backgroundColor: C.income, borderColor: C.income },
+  checkboxOverdue: { borderColor: C.bills },
+  checkmark: { color: '#fff', fontSize: 13, fontWeight: '700', lineHeight: 14 },
+  billInfo: { flex: 1 },
+  billName: { fontSize: 14, fontWeight: '600', color: C.text },
+  billNameDone: { textDecorationLine: 'line-through', color: C.muted },
+  billNameOverdue: { color: C.bills },
+  billDue: { fontSize: 11, color: C.faint, marginTop: 1 },
+  billAmt: { fontSize: 14, fontWeight: '700', marginLeft: 8 },
 });
 
 const pnl = StyleSheet.create({

@@ -27,6 +27,7 @@ export function AppProvider({ children }) {
   const [workSchedule, setWorkSchedule] = useState({});
   const [projectedExpenses, setProjectedExpenses] = useState({});
   const [deferredItems, setDeferredItems] = useState([]);
+  const [billPayments, setBillPayments] = useState({});
 
   // Accounts listener
   useEffect(() => {
@@ -137,6 +138,14 @@ export function AppProvider({ children }) {
     return unsub;
   }, []);
 
+  // Bill payments listener
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'billPayments'), (snap) => {
+      if (snap.exists()) setBillPayments(snap.data().payments || {});
+    });
+    return unsub;
+  }, []);
+
   // — Accounts —
   const addAccount = useCallback(async (data) => {
     await addDoc(collection(db, 'accounts'), {
@@ -239,6 +248,10 @@ export function AppProvider({ children }) {
     await setDoc(doc(db, 'settings', 'deferredItems'), { items });
   }, []);
 
+  const saveBillPayments = useCallback(async (payments) => {
+    await setDoc(doc(db, 'settings', 'billPayments'), { payments });
+  }, []);
+
   // — Settings —
   const saveUserName = useCallback(async (name) => {
     await setDoc(doc(db, 'settings', 'app'), { userName: name }, { merge: true });
@@ -250,6 +263,7 @@ export function AppProvider({ children }) {
       projectedIncome, saveProjectedIncome,
       projectedExpenses, saveProjectedExpenses,
       deferredItems, saveDeferredItems,
+      billPayments, saveBillPayments,
       currentScreen, setCurrentScreen,
       userName, saveUserName,
       addAccount, updateAccount, deleteAccount,
