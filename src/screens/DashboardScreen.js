@@ -983,17 +983,50 @@ function UpcomingBills({ bills }) {
 }
 
 // ─── MonthlyBillsTracker ──────────────────────────────────────────────────────
-function MonthlyBillsTracker({ bills, billPayments, onTogglePaid }) {
+function MonthlyBillsTracker({ bills, accounts, darsHistory, billPayments, onTogglePaid }) {
   const today = new Date();
   const todayDay = today.getDate();
-  const yearMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-  const monthName = MONTHS[today.getMonth()];
+  const yr = today.getFullYear();
+  const mo = today.getMonth();
+  const yearMonth = `${yr}-${String(mo + 1).padStart(2, '0')}`;
+  const monthName = MONTHS[mo];
+
+  // Bills from the bills collection
+  const collectionBills = useMemo(() =>
+    bills.filter(b => b.dueDate && b.dueDate.startsWith(yearMonth)),
+    [bills, yearMonth]
+  );
+
+  // Recurring bills derived from account due-day fields (same logic as calendar)
+  const accountEvents = useMemo(() => {
+    const parseDayNum = (val) => {
+      if (!val) return NaN;
+      const s = String(val);
+      if (s.includes('-')) { const parts = s.split('-'); return parseInt(parts[parts.length - 1], 10); }
+      return parseInt(s, 10);
+    };
+    const daysInMo = new Date(yr, mo + 1, 0).getDate();
+    const paymentRe = /due|payment|bill|premium|amount/i;
+    const events = [];
+    (accounts || []).forEach(acc => {
+      (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
+        const raw = field.value || getLatestValue(darsHistory || {}, acc.id, field.id);
+        const dayNum = parseDayNum(raw);
+        if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInMo) return;
+        const dueDate = `${yr}-${pad(mo + 1)}-${pad(dayNum)}`;
+        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label))
+          || (acc.fields || []).find(f => f.type === 'currency');
+        const amount = amtField ? parseFloat(getLatestValue(darsHistory || {}, acc.id, amtField.id)) || 0 : 0;
+        events.push({ id: `${acc.id}_${field.id}`, name: acc.name, category: 'bills', amount, icon: acc.icon, dueDate });
+      });
+    });
+    return events;
+  }, [accounts, darsHistory, yr, mo]);
 
   const monthBills = useMemo(() =>
-    [...bills]
-      .filter(b => b.dueDate && b.dueDate.startsWith(yearMonth))
+    [...collectionBills, ...accountEvents]
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [bills, yearMonth]
+    [collectionBills, accountEvents]
   );
 
   const paidIds = useMemo(() => new Set((billPayments || {})[yearMonth] || []), [billPayments, yearMonth]);
@@ -1391,7 +1424,7 @@ export default function DashboardScreen() {
         // ── Mobile: full mobile layout ──
         <View style={s.colStack}>
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
-          <MonthlyBillsTracker bills={bills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
+          <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
@@ -1407,7 +1440,7 @@ export default function DashboardScreen() {
         <View style={s.colStack}>
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
-          <MonthlyBillsTracker bills={bills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
+          <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
@@ -1425,7 +1458,7 @@ export default function DashboardScreen() {
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
-            <MonthlyBillsTracker bills={bills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
+            <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
             <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
             <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
             <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
