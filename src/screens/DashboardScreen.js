@@ -150,7 +150,7 @@ function DraggableBillChip({ bill, cellsRef, onHoverChange, onDrop }) {
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
-function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, unscheduledCreditBills = [], onScheduleCreditBill }) {
+function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, cellsRef, billDragOverStr }) {
   const today = new Date();
   const [yr, setYr] = useState(today.getFullYear());
   const [mo, setMo] = useState(today.getMonth());
@@ -163,15 +163,9 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
   const [isDragging, setIsDragging] = useState(false);
   const gridRef = useRef(null);
   const gridAbsPos = useRef(null);
-  const cellsRef = useRef([]);
   const projIncomeRef = useRef({});
   const hoverCellRef = useRef(null);
   const [dragOverStr, setDragOverStr] = useState(null);
-
-  // ── Bills-checklist drag refs (credit card monthly amounts due) ──────────
-  const [billDragOverStr, setBillDragOverStr] = useState(null);
-  const [billScheduleModal, setBillScheduleModal] = useState(null);
-  const [billScheduleDate, setBillScheduleDate] = useState('');
 
   // ── Expense bag refs ─────────────────────────────────────────────────────
   const expenseDragAnim = useRef(new Animated.ValueXY()).current;
@@ -711,65 +705,6 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
         </View>
       </View>
 
-      {/* Bills checklist tray — drag a credit card's amount due onto the day you want to pay it */}
-      {unscheduledCreditBills.length > 0 && (
-        <View style={cal.billTray}>
-          <Text style={cal.billTrayLabel}>📋 Bills to schedule{isMobile ? ' — tap to pick a day' : ' — drag onto a day'}</Text>
-          <View style={cal.billTrayRow}>
-            {unscheduledCreditBills.map(bill => (
-              isMobile ? (
-                <TouchableOpacity
-                  key={bill.id}
-                  style={cal.billChip}
-                  onPress={() => { setBillScheduleDate(''); setBillScheduleModal(bill); }}
-                >
-                  <Text style={cal.billChipIcon}>{bill.icon || '💳'}</Text>
-                  <Text style={cal.billChipName} numberOfLines={1}>{bill.name}</Text>
-                  <Text style={cal.billChipAmt}>${bill.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
-                </TouchableOpacity>
-              ) : (
-                <DraggableBillChip
-                  key={bill.id}
-                  bill={bill}
-                  cellsRef={cellsRef}
-                  onHoverChange={setBillDragOverStr}
-                  onDrop={(dateStr) => onScheduleCreditBill(bill.accountId, dateStr, bill.amount, bill.name, bill.icon)}
-                />
-              )
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Mobile: tap-to-schedule modal (no pointer drag on touch) */}
-      <Modal visible={billScheduleModal !== null} transparent animationType="fade" onRequestClose={() => setBillScheduleModal(null)}>
-        <View style={cal.incOverlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setBillScheduleModal(null)} />
-          <View style={cal.incBox}>
-            <Text style={cal.incTitle}>Schedule Payment</Text>
-            <Text style={cal.incDate}>{billScheduleModal?.name} — ${parseFloat(billScheduleModal?.amount || 0).toFixed(2)}</Text>
-            <TextInput style={cal.incInput} value={billScheduleDate} onChangeText={setBillScheduleDate}
-              placeholder="Payment date (YYYY-MM-DD)" placeholderTextColor={C.faint} autoFocus />
-            <View style={cal.incBtns}>
-              <TouchableOpacity style={cal.incCancel} onPress={() => setBillScheduleModal(null)}>
-                <Text style={cal.incCancelTxt}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={cal.incSave}
-                onPress={() => {
-                  if (billScheduleDate.trim() && billScheduleModal) {
-                    onScheduleCreditBill(billScheduleModal.accountId, billScheduleDate.trim(), billScheduleModal.amount, billScheduleModal.name, billScheduleModal.icon);
-                  }
-                  setBillScheduleModal(null);
-                }}
-              >
-                <Text style={cal.incSaveTxt}>Schedule</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
       {/* Day headers */}
       <View style={cal.dayRow}>
         {dayHeaders.map((d, i) => (
@@ -1058,7 +993,9 @@ function UpcomingBills({ bills }) {
 }
 
 // ─── MonthlyBillsTracker ──────────────────────────────────────────────────────
-function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, onTogglePaid }) {
+function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, onTogglePaid, unscheduledCreditBills = [], onScheduleCreditBill, cellsRef, onHoverChange, isMobile }) {
+  const [billScheduleModal, setBillScheduleModal] = useState(null);
+  const [billScheduleDate, setBillScheduleDate] = useState('');
   const today = new Date();
   const todayDay = today.getDate();
   const yr = today.getFullYear();
@@ -1120,6 +1057,64 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
           )}
         </View>
       </View>
+
+      {unscheduledCreditBills.length > 0 && (
+        <View style={cal.billTray}>
+          <Text style={cal.billTrayLabel}>📋 Bills to schedule{isMobile ? ' — tap to pick a day' : ' — drag onto a day'}</Text>
+          <View style={cal.billTrayRow}>
+            {unscheduledCreditBills.map(bill => (
+              isMobile ? (
+                <TouchableOpacity
+                  key={bill.id}
+                  style={cal.billChip}
+                  onPress={() => { setBillScheduleDate(''); setBillScheduleModal(bill); }}
+                >
+                  <Text style={cal.billChipIcon}>{bill.icon || '💳'}</Text>
+                  <Text style={cal.billChipName} numberOfLines={1}>{bill.name}</Text>
+                  <Text style={cal.billChipAmt}>${bill.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
+                </TouchableOpacity>
+              ) : (
+                <DraggableBillChip
+                  key={bill.id}
+                  bill={bill}
+                  cellsRef={cellsRef}
+                  onHoverChange={onHoverChange}
+                  onDrop={(dateStr) => onScheduleCreditBill(bill.accountId, dateStr, bill.amount, bill.name, bill.icon)}
+                />
+              )
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Mobile: tap-to-schedule modal (no pointer drag on touch) */}
+      <Modal visible={billScheduleModal !== null} transparent animationType="fade" onRequestClose={() => setBillScheduleModal(null)}>
+        <View style={cal.incOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setBillScheduleModal(null)} />
+          <View style={cal.incBox}>
+            <Text style={cal.incTitle}>Schedule Payment</Text>
+            <Text style={cal.incDate}>{billScheduleModal?.name} — ${parseFloat(billScheduleModal?.amount || 0).toFixed(2)}</Text>
+            <TextInput style={cal.incInput} value={billScheduleDate} onChangeText={setBillScheduleDate}
+              placeholder="Payment date (YYYY-MM-DD)" placeholderTextColor={C.faint} autoFocus />
+            <View style={cal.incBtns}>
+              <TouchableOpacity style={cal.incCancel} onPress={() => setBillScheduleModal(null)}>
+                <Text style={cal.incCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={cal.incSave}
+                onPress={() => {
+                  if (billScheduleDate.trim() && billScheduleModal) {
+                    onScheduleCreditBill(billScheduleModal.accountId, billScheduleDate.trim(), billScheduleModal.amount, billScheduleModal.name, billScheduleModal.icon);
+                  }
+                  setBillScheduleModal(null);
+                }}
+              >
+                <Text style={cal.incSaveTxt}>Schedule</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {monthBills.length === 0 ? (
         <>
@@ -1433,6 +1428,10 @@ export default function DashboardScreen() {
   const [payDeferModal, setPayDeferModal] = useState(null);
   const [payDeferDate, setPayDeferDate] = useState('');
 
+  // Shared with MonthlyBillsTracker so its bill chips can be dragged onto the calendar grid.
+  const cellsRef = useRef([]);
+  const [billDragOverStr, setBillDragOverStr] = useState(null);
+
   const handlePayDeferred = () => {
     if (!payDeferModal || !payDeferDate) return;
     const newDeferred = (deferredItems || []).filter(d => d.id !== payDeferModal.id);
@@ -1534,8 +1533,8 @@ export default function DashboardScreen() {
       {isMobile ? (
         // ── Mobile: full mobile layout ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} />
-          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
+          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
@@ -1549,9 +1548,9 @@ export default function DashboardScreen() {
       ) : isNarrow ? (
         // ── Narrow desktop: calendar full-width on top, panels stacked below ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
-          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
+          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
@@ -1565,11 +1564,11 @@ export default function DashboardScreen() {
         // ── Wide desktop: two-column side-by-side ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} />
+            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
-            <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
+            <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
             <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
             <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
             <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
