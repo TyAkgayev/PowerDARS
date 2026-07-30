@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, ScrollView, TextInput, Modal,
+  View, Text, ScrollView, TextInput,
   TouchableOpacity, StyleSheet, useWindowDimensions,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
@@ -29,56 +29,13 @@ const ACCOUNT_GROUPS = [
   { title: 'Other',        types: ['utility', 'subscription', 'other'] },
 ];
 
-function todayReadable() {
-  return new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-function DayPicker({ visible, selected, onSelect, onClose }) {
-  const days = Array.from({ length: 31 }, (_, i) => i + 1);
-  const rows = [];
-  for (let i = 0; i < 31; i += 7) rows.push(days.slice(i, Math.min(i + 7, 31)));
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity style={dp.overlay} onPress={onClose} activeOpacity={1}>
-        <View style={dp.box}>
-          <Text style={dp.title}>Select Day</Text>
-          {rows.map((row, ri) => (
-            <View key={ri} style={dp.row}>
-              {row.map(day => {
-                const sel = selected === String(day);
-                return (
-                  <TouchableOpacity
-                    key={day}
-                    style={[dp.cell, sel && dp.cellSel]}
-                    onPress={() => { onSelect(String(day)); onClose(); }}
-                  >
-                    <Text style={[dp.cellTxt, sel && dp.cellTxtSel]}>{day}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-              {row.length < 7 && Array.from({ length: 7 - row.length }).map((_, i) => (
-                <View key={`e${i}`} style={dp.cell} />
-              ))}
-            </View>
-          ))}
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
+function monthReadable() {
+  return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
 function AccountEntry({ account, values, onChange, color, isMobile }) {
-  const [pickerFieldId, setPickerFieldId] = useState(null);
-
   return (
     <View style={s.acctCard}>
-      <DayPicker
-        visible={pickerFieldId !== null}
-        selected={pickerFieldId !== null ? values?.[pickerFieldId] : undefined}
-        onSelect={day => onChange(pickerFieldId, day)}
-        onClose={() => setPickerFieldId(null)}
-      />
       <View style={s.acctHeader}>
         <View style={[s.acctIcon, { backgroundColor: color + '20' }]}>
           <Text style={s.acctIconTxt}>{account.icon || '🏦'}</Text>
@@ -93,25 +50,14 @@ function AccountEntry({ account, values, onChange, color, isMobile }) {
         {(account.fields || []).map(field => (
           <View key={field.id} style={[s.fieldRow, isMobile && s.fieldRowMobile]}>
             <Text style={[s.fieldLabel, isMobile && s.fieldLabelMobile]}>{field.label}</Text>
-            {field.type === 'date' ? (
-              <TouchableOpacity
-                style={[s.fieldInput, isMobile && s.fieldInputMobile, s.dayTouchable]}
-                onPress={() => setPickerFieldId(field.id)}
-              >
-                <Text style={values?.[field.id] ? s.dayVal : s.dayPlaceholder}>
-                  {values?.[field.id] ? `Day ${values[field.id]}` : 'Tap to select'}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <TextInput
-                style={[s.fieldInput, isMobile && s.fieldInputMobile]}
-                value={values?.[field.id] !== undefined ? String(values[field.id]) : ''}
-                onChangeText={v => onChange(field.id, v)}
-                keyboardType={field.type === 'currency' || field.type === 'number' ? 'decimal-pad' : 'default'}
-                placeholder={field.type === 'currency' ? '0.00' : '—'}
-                placeholderTextColor={C.faint}
-              />
-            )}
+            <TextInput
+              style={[s.fieldInput, isMobile && s.fieldInputMobile]}
+              value={values?.[field.id] !== undefined ? String(values[field.id]) : ''}
+              onChangeText={v => onChange(field.id, v)}
+              keyboardType={field.type === 'currency' || field.type === 'number' ? 'decimal-pad' : 'default'}
+              placeholder={field.type === 'currency' ? '0.00' : '—'}
+              placeholderTextColor={C.faint}
+            />
             {!isMobile && field.type === 'currency' && <Text style={s.fieldPrefix}>$</Text>}
           </View>
         ))}
@@ -134,7 +80,7 @@ function SubmittedView({ darsEntry, accounts, onEdit }) {
     <View style={sv.container}>
       <View style={sv.successBadge}>
         <Text style={sv.successIcon}>✓</Text>
-        <Text style={sv.successTxt}>DARS submitted for today</Text>
+        <Text style={sv.successTxt}>DARS submitted for {monthReadable()}</Text>
       </View>
       <Text style={sv.submittedAt}>
         {darsEntry?.submittedAt ? 'Submitted successfully' : 'Saved'}
@@ -178,31 +124,31 @@ function SubmittedView({ darsEntry, accounts, onEdit }) {
       })}
 
       <TouchableOpacity style={sv.editBtn} onPress={onEdit}>
-        <Text style={sv.editTxt}>Edit Today's Entry</Text>
+        <Text style={sv.editTxt}>Edit This Month's Entry</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
 export default function DARSScreen() {
-  const { accounts, saveDars, getTodaysDars, setCurrentScreen } = useApp();
+  const { accounts, saveDars, getCurrentMonthDars, setCurrentScreen } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
-  const todaysDars = getTodaysDars();
+  const monthDars = getCurrentMonthDars();
   const [values, setValues] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
-    if (todaysDars) {
-      setValues(todaysDars.entries || {});
+    if (monthDars) {
+      setValues(monthDars.entries || {});
       setSubmitted(true);
     } else {
       setSubmitted(false);
       setValues({});
     }
-  }, [todaysDars]);
+  }, [monthDars]);
 
   const handleChange = (accountId, fieldId, val) => {
     setValues(prev => ({
@@ -231,8 +177,8 @@ export default function DARSScreen() {
       <View style={s.header}>
         <View>
           <Text style={s.title}>DARS</Text>
-          <Text style={s.subtitle}>Daily Account Review Sheet</Text>
-          <Text style={s.date}>{todayReadable()}</Text>
+          <Text style={s.subtitle}>Monthly Account Review Sheet</Text>
+          <Text style={s.date}>{monthReadable()}</Text>
         </View>
       </View>
 
@@ -247,7 +193,7 @@ export default function DARSScreen() {
         </View>
       ) : submitted && !editMode ? (
         <SubmittedView
-          darsEntry={todaysDars}
+          darsEntry={monthDars}
           accounts={accounts}
           onEdit={() => setEditMode(true)}
         />
@@ -255,7 +201,7 @@ export default function DARSScreen() {
         <>
           <View style={s.intro}>
             <Text style={s.introTxt}>
-              {editMode ? 'Edit your entries below, then save.' : 'Fill in the current values for each of your accounts, then submit.'}
+              {editMode ? 'Edit your entries below, then save.' : `Fill in the current values for each of your accounts for ${monthReadable()}, then submit.`}
             </Text>
           </View>
 
@@ -334,9 +280,6 @@ const s = StyleSheet.create({
   fieldInputMobile: { flex: undefined, width: '100%' },
   fieldPrefix: { fontSize: 15, color: C.faint, position: 'absolute', left: 154, top: 10 },
   noFields: { fontSize: 13, color: C.faint, textAlign: 'center', paddingVertical: 8 },
-  dayTouchable: { justifyContent: 'center' },
-  dayVal: { fontSize: 15, color: C.text },
-  dayPlaceholder: { fontSize: 15, color: C.faint },
   footer: { flexDirection: 'row', gap: 12, marginTop: 24 },
   cancelBtn: { borderWidth: 1, borderColor: C.border, borderRadius: 12, paddingVertical: 16, paddingHorizontal: 28 },
   cancelTxt: { fontSize: 16, color: C.muted, fontWeight: '500' },
@@ -369,15 +312,4 @@ const sv = StyleSheet.create({
   fieldVal: { fontSize: 14, fontWeight: '600', color: C.text },
   editBtn: { borderWidth: 1, borderColor: C.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
   editTxt: { fontSize: 15, color: C.primary, fontWeight: '600' },
-});
-
-const dp = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
-  box: { backgroundColor: '#fff', borderRadius: 18, padding: 20, width: 300, shadowColor: '#000', shadowOffset: {width:0,height:4}, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 },
-  title: { fontSize: 15, fontWeight: '700', color: C.text, textAlign: 'center', marginBottom: 14 },
-  row: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 6 },
-  cell: { width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F3F4F6' },
-  cellSel: { backgroundColor: C.primary },
-  cellTxt: { fontSize: 13, fontWeight: '600', color: C.text },
-  cellTxtSel: { color: '#fff' },
 });

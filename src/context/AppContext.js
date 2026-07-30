@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { db } from '../config/firebase';
 import {
   collection, doc, addDoc, updateDoc, deleteDoc,
@@ -7,9 +7,9 @@ import {
 
 const AppContext = createContext(null);
 
-const todayStr = () => {
+const currentMonthStr = () => {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
 export function AppProvider({ children }) {
@@ -28,6 +28,8 @@ export function AppProvider({ children }) {
   const [projectedExpenses, setProjectedExpenses] = useState({});
   const [deferredItems, setDeferredItems] = useState([]);
   const [billPayments, setBillPayments] = useState({});
+  const [creditSchedule, setCreditSchedule] = useState({});
+  const darsRedirectChecked = useRef(false);
 
   // Accounts listener
   useEffect(() => {
@@ -146,6 +148,36 @@ export function AppProvider({ children }) {
     return unsub;
   }, []);
 
+  // Credit card monthly-due schedule listener — populated when a bill is
+  // dragged from the checklist onto a calendar day
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'creditSchedule'), (snap) => {
+      if (snap.exists()) setCreditSchedule(snap.data().schedule || {});
+    });
+    return unsub;
+  }, []);
+
+  // Accounts no longer have due dates — every payment is scheduled manually,
+  // so strip any leftover due-day fields from older accounts.
+  useEffect(() => {
+    accounts.forEach(acc => {
+      if ((acc.fields || []).some(f => f.type === 'date')) {
+        updateDoc(doc(db, 'accounts', acc.id), {
+          fields: acc.fields.filter(f => f.type !== 'date'),
+        });
+      }
+    });
+  }, [accounts]);
+
+  // DARS is filled out once a month now (not daily) — send the user there
+  // on the first login of a new month if this month's sheet isn't done yet.
+  useEffect(() => {
+    if (loading || darsRedirectChecked.current) return;
+    if (accounts.length === 0) return;
+    darsRedirectChecked.current = true;
+    if (!darsHistory[currentMonthStr()]) setCurrentScreen('dars');
+  }, [loading, accounts, darsHistory]);
+
   // — Accounts —
   const addAccount = useCallback(async (data) => {
     await addDoc(collection(db, 'accounts'), {
@@ -223,9 +255,9 @@ export function AppProvider({ children }) {
     await deleteDoc(doc(db, 'workSchedule', dateStr));
   }, []);
 
-  // — DARS —
+  // — DARS — filled out once per month, keyed by "YYYY-MM"
   const saveDars = useCallback(async (entries) => {
-    const date = todayStr();
+    const date = currentMonthStr();
     await setDoc(doc(db, 'dars', date), {
       date,
       entries,
@@ -233,7 +265,13 @@ export function AppProvider({ children }) {
     });
   }, []);
 
-  const getTodaysDars = useCallback(() => darsHistory[todayStr()] || null, [darsHistory]);
+  const getCurrentMonthDars = useCallback(() => darsHistory[currentMonthStr()] || null, [darsHistory]);
+
+  // — Credit card payment scheduling — dragging a bill from the checklist
+  // onto a calendar day records which date it was scheduled for
+  const saveCreditSchedule = useCallback(async (schedule) => {
+    await setDoc(doc(db, 'settings', 'creditSchedule'), { schedule });
+  }, []);
 
   // — Projected Income —
   const saveProjectedIncome = useCallback(async (entries) => {
@@ -264,12 +302,13 @@ export function AppProvider({ children }) {
       projectedExpenses, saveProjectedExpenses,
       deferredItems, saveDeferredItems,
       billPayments, saveBillPayments,
+      creditSchedule, saveCreditSchedule,
       currentScreen, setCurrentScreen,
       userName, saveUserName,
       addAccount, updateAccount, deleteAccount,
       addBill, updateBill, deleteBill,
       addTask, toggleTask, deleteTask,
-      saveDars, getTodaysDars,
+      saveDars, getCurrentMonthDars,
       cars, addCar, updateCar, deleteCar,
       driverProfile, saveDriverProfile,
       rnProfile, saveRNProfile,
