@@ -1468,8 +1468,8 @@ export default function DashboardScreen() {
         const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label));
         if (!amtField) return null;
         const raw = darsHistory?.[currentYearMonth]?.entries?.[acc.id]?.[amtField.id];
-        const amount = parseFloat(raw);
-        if (raw === undefined || raw === '' || isNaN(amount) || amount <= 0) return null;
+        const parsed = parseFloat(raw);
+        const amount = raw === undefined || raw === '' || isNaN(parsed) ? 0 : parsed;
         return { accountId: acc.id, name: acc.name, icon: acc.icon, amount };
       })
       .filter(Boolean);
