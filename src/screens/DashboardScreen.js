@@ -80,7 +80,10 @@ function Sparkline({ data = [], color = '#4361EE', width = 90, height = 36 }) {
 // ─── Draggable bill chip (Bills checklist → calendar) ─────────────────────────
 // Mirrors the money/expense/loan bag drag mechanism above, but one instance
 // per unscheduled bill so each can be dropped on its own chosen day.
-function DraggableBillChip({ bill, cellsRef, onHoverChange, onDrop }) {
+// A bill-list row that can be dragged onto a calendar day to assign it a due
+// date (used for account bills that haven't been scheduled yet). On mobile,
+// dragging isn't available, so it falls back to a tap-to-open-modal row.
+function DraggableBillRow({ bill, cellsRef, onHoverChange, onDrop, onTapSchedule, isMobile, rowStyle, children }) {
   const anim = useRef(new Animated.ValueXY()).current;
   const [dragging, setDragging] = useState(false);
   const hoverRef = useRef(null);
@@ -137,14 +140,20 @@ function DraggableBillChip({ bill, cellsRef, onHoverChange, onDrop }) {
     },
   })).current;
 
+  if (isMobile) {
+    return (
+      <TouchableOpacity style={[rowStyle, mbt.billRowUnscheduled]} onPress={onTapSchedule} activeOpacity={0.7}>
+        {children}
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <Animated.View
-      style={[cal.billChip, dragging && cal.billChipDragging, { transform: anim.getTranslateTransform() }]}
+      style={[rowStyle, mbt.billRowUnscheduled, dragging && mbt.billRowDragging, { transform: anim.getTranslateTransform() }]}
       {...responder.panHandlers}
     >
-      <Text style={cal.billChipIcon}>{bill.icon || '💳'}</Text>
-      <Text style={cal.billChipName} numberOfLines={1}>{bill.name}</Text>
-      <Text style={cal.billChipAmt}>${bill.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
+      {children}
     </Animated.View>
   );
 }
@@ -1009,17 +1018,23 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
     [bills, yearMonth]
   );
 
+  // Unscheduled account bills sit in the list too (no dueDate yet), sorted
+  // ahead of dated bills so they're easy to find and drag onto a day.
   const monthBills = useMemo(() =>
-    [...collectionBills, ...scheduledCreditBills]
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [collectionBills, scheduledCreditBills]
+    [...collectionBills, ...scheduledCreditBills, ...unscheduledCreditBills]
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '')),
+    [collectionBills, scheduledCreditBills, unscheduledCreditBills]
   );
 
   const paidIds = useMemo(() => new Set((billPayments || {})[yearMonth] || []), [billPayments, yearMonth]);
 
-  // Index to insert TODAY line: first bill with day >= todayDay
+  // A bill with nothing owed this month is already "paid" — no amount to collect.
+  const isBillPaid = useCallback((b) => (b.amount || 0) === 0 || paidIds.has(b.id), [paidIds]);
+
+  // Index to insert TODAY line: first *dated* bill with day >= todayDay
+  // (undated/unscheduled bills sort first and are skipped here).
   const todayLineAt = useMemo(() => {
-    const idx = monthBills.findIndex(b => parseInt(b.dueDate.split('-')[2], 10) >= todayDay);
+    const idx = monthBills.findIndex(b => b.dueDate && parseInt(b.dueDate.split('-')[2], 10) >= todayDay);
     return idx === -1 ? monthBills.length : idx;
   }, [monthBills, todayDay]);
 
@@ -1028,14 +1043,14 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
     [monthBills]
   );
   const paidOwed = useMemo(() =>
-    monthBills.filter(b => b.category !== 'income' && paidIds.has(b.id)).reduce((s, b) => s + Math.abs(b.amount || 0), 0),
-    [monthBills, paidIds]
+    monthBills.filter(b => b.category !== 'income' && isBillPaid(b)).reduce((s, b) => s + Math.abs(b.amount || 0), 0),
+    [monthBills, isBillPaid]
   );
   // Count against this month's actual bills, not stale ids left in billPayments
   // from bills that no longer exist (e.g. after removing due-date auto-bills).
   const paidCount = useMemo(() =>
-    monthBills.filter(b => paidIds.has(b.id)).length,
-    [monthBills, paidIds]
+    monthBills.filter(isBillPaid).length,
+    [monthBills, isBillPaid]
   );
 
   const TodayDivider = () => (
@@ -1057,35 +1072,6 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
           )}
         </View>
       </View>
-
-      {unscheduledCreditBills.length > 0 && (
-        <View style={cal.billTray}>
-          <Text style={cal.billTrayLabel}>📋 Bills to schedule{isMobile ? ' — tap to pick a day' : ' — drag onto a day'}</Text>
-          <View style={cal.billTrayRow}>
-            {unscheduledCreditBills.map(bill => (
-              isMobile ? (
-                <TouchableOpacity
-                  key={bill.id}
-                  style={cal.billChip}
-                  onPress={() => { setBillScheduleDate(''); setBillScheduleModal(bill); }}
-                >
-                  <Text style={cal.billChipIcon}>{bill.icon || '💳'}</Text>
-                  <Text style={cal.billChipName} numberOfLines={1}>{bill.name}</Text>
-                  <Text style={cal.billChipAmt}>${bill.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
-                </TouchableOpacity>
-              ) : (
-                <DraggableBillChip
-                  key={bill.id}
-                  bill={bill}
-                  cellsRef={cellsRef}
-                  onHoverChange={onHoverChange}
-                  onDrop={(dateStr) => onScheduleCreditBill(bill.accountId, dateStr, bill.amount, bill.name, bill.icon)}
-                />
-              )
-            ))}
-          </View>
-        </View>
-      )}
 
       {/* Mobile: tap-to-schedule modal (no pointer drag on touch) */}
       <Modal visible={billScheduleModal !== null} transparent animationType="fade" onRequestClose={() => setBillScheduleModal(null)}>
@@ -1125,39 +1111,64 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
         <>
           {todayLineAt === 0 && <TodayDivider />}
           {monthBills.map((bill, idx) => {
-            const day = parseInt(bill.dueDate.split('-')[2], 10);
-            const isPast = day < todayDay;
-            const isToday = day === todayDay;
-            const isPaid = paidIds.has(bill.id);
+            const isUnscheduled = !bill.dueDate;
+            const day = isUnscheduled ? null : parseInt(bill.dueDate.split('-')[2], 10);
+            const isPast = day !== null && day < todayDay;
+            const isToday = day !== null && day === todayDay;
+            const isPaid = isBillPaid(bill);
             const isOverdue = isPast && !isPaid;
+            const canSchedule = isUnscheduled && !isPaid;
+
+            const rowStyle = [mbt.billRow, isOverdue && mbt.billRowOverdue, isPaid && mbt.billRowPaid];
+            const rowContent = (
+              <>
+                <View style={[mbt.checkbox, isPaid && mbt.checkboxDone, isOverdue && mbt.checkboxOverdue]}>
+                  {isPaid && <Text style={mbt.checkmark}>✓</Text>}
+                </View>
+                <View style={mbt.billInfo}>
+                  <Text style={[mbt.billName, isPaid && mbt.billNameDone, isOverdue && mbt.billNameOverdue]}>
+                    {bill.icon ? `${bill.icon} ` : ''}{bill.name}
+                  </Text>
+                  <Text style={[mbt.billDue, isOverdue && { color: C.bills }, isToday && { color: C.reminder, fontWeight: '600' }]}>
+                    {isUnscheduled
+                      ? (canSchedule ? (isMobile ? 'Tap to schedule' : 'Drag onto a day to schedule') : 'No amount due')
+                      : (isToday ? 'Due today' : isPast ? `Was due ${monthName.slice(0,3)} ${day}` : `Due ${monthName.slice(0,3)} ${day}`)}
+                  </Text>
+                </View>
+                <Text style={[
+                  mbt.billAmt,
+                  bill.category === 'income' ? { color: C.income } : { color: C.text },
+                  isOverdue && { color: C.bills },
+                  isPaid && { color: C.faint },
+                ]}>
+                  {bill.category === 'income' ? '+' : '-'}${Math.abs(bill.amount || 0).toFixed(2)}
+                </Text>
+              </>
+            );
 
             return (
               <React.Fragment key={bill.id}>
-                <TouchableOpacity
-                  style={[mbt.billRow, isOverdue && mbt.billRowOverdue, isPaid && mbt.billRowPaid]}
-                  onPress={() => onTogglePaid(bill.id, yearMonth)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[mbt.checkbox, isPaid && mbt.checkboxDone, isOverdue && mbt.checkboxOverdue]}>
-                    {isPaid && <Text style={mbt.checkmark}>✓</Text>}
-                  </View>
-                  <View style={mbt.billInfo}>
-                    <Text style={[mbt.billName, isPaid && mbt.billNameDone, isOverdue && mbt.billNameOverdue]}>
-                      {bill.icon ? `${bill.icon} ` : ''}{bill.name}
-                    </Text>
-                    <Text style={[mbt.billDue, isOverdue && { color: C.bills }, isToday && { color: C.reminder, fontWeight: '600' }]}>
-                      {isToday ? 'Due today' : isPast ? `Was due ${monthName.slice(0,3)} ${day}` : `Due ${monthName.slice(0,3)} ${day}`}
-                    </Text>
-                  </View>
-                  <Text style={[
-                    mbt.billAmt,
-                    bill.category === 'income' ? { color: C.income } : { color: C.text },
-                    isOverdue && { color: C.bills },
-                    isPaid && { color: C.faint },
-                  ]}>
-                    {bill.category === 'income' ? '+' : '-'}${Math.abs(bill.amount || 0).toFixed(2)}
-                  </Text>
-                </TouchableOpacity>
+                {canSchedule ? (
+                  <DraggableBillRow
+                    rowStyle={rowStyle}
+                    cellsRef={cellsRef}
+                    onHoverChange={onHoverChange}
+                    onDrop={(dateStr) => onScheduleCreditBill(bill.accountId, dateStr, bill.amount, bill.name, bill.icon)}
+                    onTapSchedule={() => { setBillScheduleDate(''); setBillScheduleModal(bill); }}
+                    isMobile={isMobile}
+                  >
+                    {rowContent}
+                  </DraggableBillRow>
+                ) : (
+                  <TouchableOpacity
+                    style={rowStyle}
+                    onPress={() => onTogglePaid(bill.id, yearMonth)}
+                    activeOpacity={0.7}
+                    disabled={(bill.amount || 0) === 0}
+                  >
+                    {rowContent}
+                  </TouchableOpacity>
+                )}
                 {idx + 1 === todayLineAt && idx + 1 < monthBills.length && <TodayDivider />}
               </React.Fragment>
             );
@@ -1480,7 +1491,7 @@ export default function DashboardScreen() {
   const unscheduledCreditBills = useMemo(() =>
     creditAmountsDue
       .filter(b => !scheduledThisMonth[b.accountId])
-      .map(b => ({ id: `credit_${b.accountId}_${currentYearMonth}`, ...b })),
+      .map(b => ({ id: `credit_${b.accountId}_${currentYearMonth}`, category: 'bills', ...b })),
     [creditAmountsDue, scheduledThisMonth, currentYearMonth]
   );
 
@@ -1660,14 +1671,6 @@ const cal = StyleSheet.create({
   bagTokenLoan: { backgroundColor: '#EDE9FE' },
   bagDragging: { opacity: 0.9, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 20, cursor: 'grabbing', zIndex: 9999 },
   bagEmoji: { fontSize: 18 },
-  billTray: { backgroundColor: '#FFFBEB', borderRadius: 10, borderWidth: 1, borderColor: '#FDE68A', padding: 10, marginBottom: 12 },
-  billTrayLabel: { fontSize: 11, fontWeight: '700', color: '#B45309', marginBottom: 8, letterSpacing: 0.3 },
-  billTrayRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  billChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 6, cursor: 'grab', zIndex: 50 },
-  billChipDragging: { opacity: 0.9, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 20, cursor: 'grabbing', zIndex: 9999 },
-  billChipIcon: { fontSize: 14 },
-  billChipName: { fontSize: 12, fontWeight: '600', color: C.text, maxWidth: 110 },
-  billChipAmt: { fontSize: 12, fontWeight: '700', color: C.bills },
   ctxMenu: { position: 'absolute', backgroundColor: '#fff', borderRadius: 10, padding: 4, shadowColor: '#000', shadowOffset: {width:0,height:4}, shadowOpacity: 0.18, shadowRadius: 12, elevation: 12, minWidth: 180, zIndex: 9999 },
   ctxItem: { paddingHorizontal: 14, paddingVertical: 10 },
   ctxItemTxt: { fontSize: 14, color: C.text, fontWeight: '500' },
@@ -1706,6 +1709,8 @@ const mbt = StyleSheet.create({
   billRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, borderRadius: 10, marginBottom: 1 },
   billRowOverdue: { backgroundColor: '#FEF2F2' },
   billRowPaid: { opacity: 0.55 },
+  billRowUnscheduled: { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', paddingHorizontal: 8, cursor: 'grab' },
+  billRowDragging: { opacity: 0.9, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 20, cursor: 'grabbing', zIndex: 9999 },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: C.border, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
   checkboxDone: { backgroundColor: C.income, borderColor: C.income },
   checkboxOverdue: { borderColor: C.bills },
