@@ -1453,8 +1453,8 @@ export default function DashboardScreen() {
     saveBillPayments({ ...(billPayments || {}), [yearMonth]: updated });
   }, [billPayments, saveBillPayments]);
 
-  // ── Credit card amounts due (from this month's DARS) → Bills checklist ──
-  // Credit cards no longer carry a due date; each month's amount due sits
+  // ── Account amounts due (from this month's DARS) → Bills checklist ──
+  // Accounts no longer carry a due date; each month's amount due sits
   // here until it's dragged onto a calendar day to schedule the payment.
   const currentYearMonth = useMemo(() => {
     const d = new Date();
@@ -1464,10 +1464,8 @@ export default function DashboardScreen() {
   const creditAmountsDue = useMemo(() => {
     const paymentRe = /due|payment|bill|premium|amount/i;
     return (accounts || [])
-      .filter(a => a.type === 'credit')
       .map(acc => {
-        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label))
-          || (acc.fields || []).find(f => f.type === 'currency');
+        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label));
         if (!amtField) return null;
         const raw = darsHistory?.[currentYearMonth]?.entries?.[acc.id]?.[amtField.id];
         const amount = parseFloat(raw);
