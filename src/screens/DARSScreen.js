@@ -21,7 +21,6 @@ const C = {
 const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
 
 const ACCOUNT_GROUPS = [
-  { title: 'Banks',        types: ['checking', 'savings', 'investment'] },
   { title: 'Credit Cards', types: ['credit'] },
   { title: 'Car',          types: ['car_lease', 'car_insurance'] },
   { title: 'Phone',        types: ['phone'] },
@@ -130,8 +129,13 @@ function SubmittedView({ darsEntry, accounts, onEdit }) {
   );
 }
 
+// Bank balances are edited from the dashboard now, not the monthly sheet —
+// DARS only covers accounts with things due each month.
+const BANK_TYPES = ['checking', 'savings', 'investment'];
+
 export default function DARSScreen() {
-  const { accounts, saveDars, getCurrentMonthDars, setCurrentScreen } = useApp();
+  const { accounts: allAccounts, saveDars, getCurrentMonthDars, setCurrentScreen } = useApp();
+  const accounts = allAccounts.filter(a => !BANK_TYPES.includes(a.type));
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const monthDars = getCurrentMonthDars();
@@ -143,7 +147,7 @@ export default function DARSScreen() {
   useEffect(() => {
     if (monthDars) {
       setValues(monthDars.entries || {});
-      setSubmitted(true);
+      setSubmitted(!!monthDars.submittedAt);
     } else {
       setSubmitted(false);
       setValues({});

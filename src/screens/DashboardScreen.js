@@ -860,13 +860,17 @@ function getSparklineData(darsHistory, accountId, fieldId) {
     .filter(v => v !== undefined && v !== null && v !== '');
 }
 
-function AccountRow({ acc, darsHistory, color, isMobile }) {
+function AccountRow({ acc, darsHistory, color, isMobile, onPress }) {
   const pf = acc.fields?.find(f => f.type === 'currency') || acc.fields?.[0];
   const val = pf ? getLatestValue(darsHistory, acc.id, pf.id) : null;
   const spark = pf ? getSparklineData(darsHistory, acc.id, pf.id) : [];
   const isNeg = val !== null && parseFloat(val) < 0;
+  const Wrapper = onPress ? TouchableOpacity : View;
   return (
-    <View style={[pnl.row, isMobile && pnl.rowMobile]}>
+    <Wrapper
+      style={[pnl.row, isMobile && pnl.rowMobile]}
+      {...(onPress ? { onPress: () => onPress(acc), activeOpacity: 0.6 } : {})}
+    >
       <View style={[pnl.icon, { backgroundColor: color + '20' }]}>
         <IconView icon={acc.icon || ICONS[acc.type] || ICONS.checking} size={20} />
       </View>
@@ -879,12 +883,12 @@ function AccountRow({ acc, darsHistory, color, isMobile }) {
         <Text style={pnl.balanceLabel}>{pf ? pf.label : 'Balance'}</Text>
       </View>
       {!isMobile && <Sparkline data={spark} color={color} width={90} height={36} />}
-    </View>
+    </Wrapper>
   );
 }
 
 // ─── BanksPanel ───────────────────────────────────────────────────────────────
-function BanksPanel({ accounts, darsHistory, isMobile }) {
+function BanksPanel({ accounts, darsHistory, isMobile, onEditAccount }) {
   const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
   const bankAccounts = accounts.filter(a => BANK_TYPES.includes(a.type));
 
@@ -901,6 +905,10 @@ function BanksPanel({ accounts, darsHistory, isMobile }) {
 
   return (
     <View style={pnl.card}>
+      <View style={pnl.header}>
+        <Text style={pnl.title}>Banks</Text>
+        <Text style={{ fontSize: 11, color: C.faint }}>Tap to update</Text>
+      </View>
       {bankAccounts.map((acc, idx) => (
         <AccountRow
           key={acc.id}
@@ -908,6 +916,7 @@ function BanksPanel({ accounts, darsHistory, isMobile }) {
           darsHistory={darsHistory}
           color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
           isMobile={isMobile}
+          onPress={onEditAccount}
         />
       ))}
       <View style={pnl.totalFooter}>
@@ -915,6 +924,67 @@ function BanksPanel({ accounts, darsHistory, isMobile }) {
         <Text style={pnl.nwValue}>{fmtCurrency(netWorth)}</Text>
       </View>
     </View>
+  );
+}
+
+// ─── BankBalanceModal ───────────────────────────────────────────────────────
+function BankBalanceModal({ account, darsHistory, onClose, onSave }) {
+  const [values, setValues] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!account) return;
+    const init = {};
+    (account.fields || []).forEach(f => {
+      const v = getLatestValue(darsHistory, account.id, f.id);
+      init[f.id] = v !== null && v !== undefined ? String(v) : '';
+    });
+    setValues(init);
+  }, [account, darsHistory]);
+
+  if (!account) return null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(account.id, values);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={mds.overlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={onClose} />
+        <View style={[mds.box, { width: 340 }]}>
+          <Text style={mds.title}>{account.icon ? `${account.icon} ` : ''}{account.name}</Text>
+          {(account.fields || []).map(field => (
+            <View key={field.id}>
+              <Text style={mds.label}>{field.label}</Text>
+              <TextInput
+                style={mds.input}
+                value={values[field.id] ?? ''}
+                onChangeText={v => setValues(prev => ({ ...prev, [field.id]: v }))}
+                keyboardType={field.type === 'currency' || field.type === 'number' ? 'decimal-pad' : 'default'}
+                placeholder={field.type === 'currency' ? '0.00' : '—'}
+                placeholderTextColor={C.faint}
+                autoFocus
+              />
+            </View>
+          ))}
+          <View style={mds.btnRow}>
+            <TouchableOpacity style={mds.cancelBtn} onPress={onClose}>
+              <Text style={mds.cancelTxt}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[mds.saveBtn, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
+              <Text style={mds.saveTxt}>{saving ? 'Saving…' : 'Save'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1442,12 +1512,19 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments, creditSchedule, saveCreditSchedule } = useApp();
+  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments, creditSchedule, saveCreditSchedule, updateBankBalance } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const isNarrow = width < 1100;
   const [payDeferModal, setPayDeferModal] = useState(null);
   const [payDeferDate, setPayDeferDate] = useState('');
+  const [editingBankAccount, setEditingBankAccount] = useState(null);
+
+  const handleSaveBankBalance = async (accountId, values) => {
+    await Promise.all(
+      Object.entries(values).map(([fieldId, val]) => updateBankBalance(accountId, fieldId, val))
+    );
+  };
 
   // Shared with MonthlyBillsTracker so its bill chips can be dragged onto the calendar grid.
   const cellsRef = useRef([]);
@@ -1554,7 +1631,7 @@ export default function DashboardScreen() {
         <View style={s.colStack}>
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
           <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
-          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} onEditAccount={setEditingBankAccount} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Car" footerColor={C.bills} />
@@ -1570,7 +1647,7 @@ export default function DashboardScreen() {
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
-          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} onEditAccount={setEditingBankAccount} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
           <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} />
@@ -1588,7 +1665,7 @@ export default function DashboardScreen() {
           </View>
           <View style={s.right}>
             <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
-            <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+            <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} onEditAccount={setEditingBankAccount} />
             <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
             <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
             <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} />
@@ -1621,6 +1698,14 @@ export default function DashboardScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Bank balance quick-edit modal */}
+      <BankBalanceModal
+        account={editingBankAccount}
+        darsHistory={darsHistory}
+        onClose={() => setEditingBankAccount(null)}
+        onSave={handleSaveBankBalance}
+      />
 
     </ScrollView>
   );

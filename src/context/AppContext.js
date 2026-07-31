@@ -171,11 +171,14 @@ export function AppProvider({ children }) {
 
   // DARS is filled out once a month now (not daily) — send the user there
   // on the first login of a new month if this month's sheet isn't done yet.
+  // Bank balances can be updated from the dashboard at any time and merge into
+  // this same month's doc without setting submittedAt, so submittedAt (not mere
+  // doc existence) is what tracks whether the monthly DARS itself is done.
   useEffect(() => {
     if (loading || darsRedirectChecked.current) return;
     if (accounts.length === 0) return;
     darsRedirectChecked.current = true;
-    if (!darsHistory[currentMonthStr()]) setCurrentScreen('dars');
+    if (!darsHistory[currentMonthStr()]?.submittedAt) setCurrentScreen('dars');
   }, [loading, accounts, darsHistory]);
 
   // — Accounts —
@@ -267,6 +270,18 @@ export function AppProvider({ children }) {
 
   const getCurrentMonthDars = useCallback(() => darsHistory[currentMonthStr()] || null, [darsHistory]);
 
+  // Bank balances are edited straight from the dashboard rather than through
+  // the monthly DARS form. This merges into the same month's dars doc (so
+  // history/sparklines keep working) but never touches submittedAt, which is
+  // what marks the monthly DARS itself as done.
+  const updateBankBalance = useCallback(async (accountId, fieldId, value) => {
+    const date = currentMonthStr();
+    await setDoc(doc(db, 'dars', date), {
+      date,
+      entries: { [accountId]: { [fieldId]: value } },
+    }, { merge: true });
+  }, []);
+
   // — Credit card payment scheduling — dragging a bill from the checklist
   // onto a calendar day records which date it was scheduled for
   const saveCreditSchedule = useCallback(async (schedule) => {
@@ -308,7 +323,7 @@ export function AppProvider({ children }) {
       addAccount, updateAccount, deleteAccount,
       addBill, updateBill, deleteBill,
       addTask, toggleTask, deleteTask,
-      saveDars, getCurrentMonthDars,
+      saveDars, getCurrentMonthDars, updateBankBalance,
       cars, addCar, updateCar, deleteCar,
       driverProfile, saveDriverProfile,
       rnProfile, saveRNProfile,
