@@ -844,8 +844,19 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
 
 const BANK_TYPES = ['checking', 'savings', 'investment'];
 
+// Monthly dars docs (id "YYYY-MM") coexist with older daily docs (id
+// "YYYY-MM-DD") left over from before DARS switched to monthly-only review.
+// A plain string sort ranks "2026-07-30" above "2026-07", so a leftover
+// daily entry would always outrank that month's real (and more current)
+// monthly doc — pad the shorter key so a monthly doc always sorts after
+// any daily doc from that same month.
+function dateSortKey(dateStr) {
+  const d = dateStr || '';
+  return d.length === 7 ? d + '~' : d;
+}
+
 function getLatestValue(darsHistory, accountId, fieldId) {
-  const entries = Object.values(darsHistory).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const entries = Object.values(darsHistory).sort((a, b) => dateSortKey(b.date).localeCompare(dateSortKey(a.date)));
   for (const e of entries) {
     if (e.entries?.[accountId]?.[fieldId] !== undefined) return e.entries[accountId][fieldId];
   }
@@ -854,7 +865,7 @@ function getLatestValue(darsHistory, accountId, fieldId) {
 
 function getSparklineData(darsHistory, accountId, fieldId) {
   return Object.values(darsHistory)
-    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    .sort((a, b) => dateSortKey(a.date).localeCompare(dateSortKey(b.date)))
     .slice(-10)
     .map(e => e.entries?.[accountId]?.[fieldId])
     .filter(v => v !== undefined && v !== null && v !== '');
