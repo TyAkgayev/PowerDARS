@@ -83,7 +83,7 @@ function Sparkline({ data = [], color = '#4361EE', width = 90, height = 36 }) {
 // A bill-list row that can be dragged onto a calendar day to assign it a due
 // date (used for account bills that haven't been scheduled yet). On mobile,
 // dragging isn't available, so it falls back to a tap-to-open-modal row.
-function DraggableBillRow({ bill, cellsRef, onHoverChange, onDrop, onTapSchedule, isMobile, rowStyle, children }) {
+function DraggableBillRow({ cellsRef, onHoverChange, onDrop, onTapSchedule, isMobile, style, children }) {
   const anim = useRef(new Animated.ValueXY()).current;
   const [dragging, setDragging] = useState(false);
   const hoverRef = useRef(null);
@@ -142,7 +142,7 @@ function DraggableBillRow({ bill, cellsRef, onHoverChange, onDrop, onTapSchedule
 
   if (isMobile) {
     return (
-      <TouchableOpacity style={[rowStyle, mbt.billRowUnscheduled]} onPress={onTapSchedule} activeOpacity={0.7}>
+      <TouchableOpacity style={[style, mbt.billRowUnscheduled]} onPress={onTapSchedule} activeOpacity={0.7}>
         {children}
       </TouchableOpacity>
     );
@@ -150,7 +150,7 @@ function DraggableBillRow({ bill, cellsRef, onHoverChange, onDrop, onTapSchedule
 
   return (
     <Animated.View
-      style={[rowStyle, mbt.billRowUnscheduled, dragging && mbt.billRowDragging, { transform: anim.getTranslateTransform() }]}
+      style={[style, mbt.billRowUnscheduled, dragging && mbt.billRowDragging, { transform: anim.getTranslateTransform() }]}
       {...responder.panHandlers}
     >
       {children}
@@ -1120,11 +1120,8 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
             const canSchedule = isUnscheduled && !isPaid;
 
             const rowStyle = [mbt.billRow, isOverdue && mbt.billRowOverdue, isPaid && mbt.billRowPaid];
-            const rowContent = (
+            const infoAmount = (
               <>
-                <View style={[mbt.checkbox, isPaid && mbt.checkboxDone, isOverdue && mbt.checkboxOverdue]}>
-                  {isPaid && <Text style={mbt.checkmark}>✓</Text>}
-                </View>
                 <View style={mbt.billInfo}>
                   <Text style={[mbt.billName, isPaid && mbt.billNameDone, isOverdue && mbt.billNameOverdue]}>
                     {bill.icon ? `${bill.icon} ` : ''}{bill.name}
@@ -1146,29 +1143,42 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
               </>
             );
 
+            // The checkbox is its own tap target so a bill can be checked off
+            // directly, whether or not it's ever been dragged onto a day.
             return (
               <React.Fragment key={bill.id}>
-                {canSchedule ? (
-                  <DraggableBillRow
-                    rowStyle={rowStyle}
-                    cellsRef={cellsRef}
-                    onHoverChange={onHoverChange}
-                    onDrop={(dateStr) => onScheduleCreditBill(bill.accountId, dateStr, bill.amount, bill.name, bill.icon)}
-                    onTapSchedule={() => { setBillScheduleDate(''); setBillScheduleModal(bill); }}
-                    isMobile={isMobile}
-                  >
-                    {rowContent}
-                  </DraggableBillRow>
-                ) : (
+                <View style={rowStyle}>
                   <TouchableOpacity
-                    style={rowStyle}
                     onPress={() => onTogglePaid(bill.id, yearMonth)}
-                    activeOpacity={0.7}
+                    activeOpacity={0.6}
                     disabled={(bill.amount || 0) === 0}
                   >
-                    {rowContent}
+                    <View style={[mbt.checkbox, isPaid && mbt.checkboxDone, isOverdue && mbt.checkboxOverdue]}>
+                      {isPaid && <Text style={mbt.checkmark}>✓</Text>}
+                    </View>
                   </TouchableOpacity>
-                )}
+                  {canSchedule ? (
+                    <DraggableBillRow
+                      style={mbt.billRowMain}
+                      cellsRef={cellsRef}
+                      onHoverChange={onHoverChange}
+                      onDrop={(dateStr) => onScheduleCreditBill(bill.accountId, dateStr, bill.amount, bill.name, bill.icon)}
+                      onTapSchedule={() => { setBillScheduleDate(''); setBillScheduleModal(bill); }}
+                      isMobile={isMobile}
+                    >
+                      {infoAmount}
+                    </DraggableBillRow>
+                  ) : (
+                    <TouchableOpacity
+                      style={mbt.billRowMain}
+                      onPress={() => onTogglePaid(bill.id, yearMonth)}
+                      activeOpacity={0.7}
+                      disabled={(bill.amount || 0) === 0}
+                    >
+                      {infoAmount}
+                    </TouchableOpacity>
+                  )}
+                </View>
                 {idx + 1 === todayLineAt && idx + 1 < monthBills.length && <TodayDivider />}
               </React.Fragment>
             );
@@ -1709,7 +1719,8 @@ const mbt = StyleSheet.create({
   billRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, borderRadius: 10, marginBottom: 1 },
   billRowOverdue: { backgroundColor: '#FEF2F2' },
   billRowPaid: { opacity: 0.55 },
-  billRowUnscheduled: { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', paddingHorizontal: 8, cursor: 'grab' },
+  billRowMain: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  billRowUnscheduled: { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, cursor: 'grab' },
   billRowDragging: { opacity: 0.9, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 20, cursor: 'grabbing', zIndex: 9999 },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: C.border, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
   checkboxDone: { backgroundColor: C.income, borderColor: C.income },
