@@ -28,8 +28,14 @@ const ACCOUNT_GROUPS = [
   { title: 'Other',        types: ['utility', 'subscription', 'other'] },
 ];
 
-function monthReadable() {
-  return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+function pad(n) { return String(n).padStart(2, '0'); }
+
+// Accepts either a "YYYY-MM" string or explicit (year, monthIndex) args.
+function monthReadable(yrOrMonthStr, mo) {
+  const [y, m] = mo === undefined
+    ? String(yrOrMonthStr).split('-').map(Number)
+    : [yrOrMonthStr, mo + 1];
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
 function AccountEntry({ account, values, onChange, color, isMobile }) {
@@ -79,7 +85,7 @@ function SubmittedView({ darsEntry, accounts, onEdit }) {
     <View style={sv.container}>
       <View style={sv.successBadge}>
         <Text style={sv.successIcon}>✓</Text>
-        <Text style={sv.successTxt}>DARS submitted for {monthReadable()}</Text>
+        <Text style={sv.successTxt}>DARS submitted for {monthReadable(darsEntry?.date)}</Text>
       </View>
       <Text style={sv.submittedAt}>
         {darsEntry?.submittedAt ? 'Submitted successfully' : 'Saved'}
@@ -134,17 +140,25 @@ function SubmittedView({ darsEntry, accounts, onEdit }) {
 const BANK_TYPES = ['checking', 'savings', 'investment'];
 
 export default function DARSScreen() {
-  const { accounts: allAccounts, saveDars, getCurrentMonthDars, setCurrentScreen } = useApp();
+  const { accounts: allAccounts, saveDars, darsHistory, setCurrentScreen } = useApp();
   const accounts = allAccounts.filter(a => !BANK_TYPES.includes(a.type));
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
-  const monthDars = getCurrentMonthDars();
+
+  const today = new Date();
+  const [yr, setYr] = useState(today.getFullYear());
+  const [mo, setMo] = useState(today.getMonth());
+  const monthStr = `${yr}-${pad(mo + 1)}`;
+  const isCurrentMonth = yr === today.getFullYear() && mo === today.getMonth();
+  const monthDars = darsHistory[monthStr] || null;
+
   const [values, setValues] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
+    setEditMode(false);
     if (monthDars) {
       setValues(monthDars.entries || {});
       setSubmitted(!!monthDars.submittedAt);
@@ -153,6 +167,10 @@ export default function DARSScreen() {
       setValues({});
     }
   }, [monthDars]);
+
+  const goBack = () => { if (mo === 0) { setMo(11); setYr(y => y - 1); } else setMo(m => m - 1); };
+  const goFwd = () => { if (mo === 11) { setMo(0); setYr(y => y + 1); } else setMo(m => m + 1); };
+  const goToday = () => { setYr(today.getFullYear()); setMo(today.getMonth()); };
 
   const handleChange = (accountId, fieldId, val) => {
     setValues(prev => ({
@@ -164,7 +182,7 @@ export default function DARSScreen() {
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      await saveDars(values);
+      await saveDars(values, monthStr);
       setSubmitted(true);
       setEditMode(false);
       setCurrentScreen('dashboard');
@@ -182,7 +200,20 @@ export default function DARSScreen() {
         <View>
           <Text style={s.title}>DARS</Text>
           <Text style={s.subtitle}>Monthly Account Review Sheet</Text>
-          <Text style={s.date}>{monthReadable()}</Text>
+        </View>
+        <View style={s.monthNav}>
+          <TouchableOpacity style={s.navBtn} onPress={goBack}>
+            <Text style={s.navTxt}>‹</Text>
+          </TouchableOpacity>
+          <Text style={s.date}>{monthReadable(yr, mo)}</Text>
+          <TouchableOpacity style={s.navBtn} onPress={goFwd}>
+            <Text style={s.navTxt}>›</Text>
+          </TouchableOpacity>
+          {!isCurrentMonth && (
+            <TouchableOpacity style={s.todayBtn} onPress={goToday}>
+              <Text style={s.todayTxt}>Today</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -205,7 +236,7 @@ export default function DARSScreen() {
         <>
           <View style={s.intro}>
             <Text style={s.introTxt}>
-              {editMode ? 'Edit your entries below, then save.' : `Fill in the current values for each of your accounts for ${monthReadable()}, then submit.`}
+              {editMode ? 'Edit your entries below, then save.' : `Fill in the ${isCurrentMonth ? 'current' : 'planned'} values for each of your accounts for ${monthReadable(yr, mo)}, then submit.`}
             </Text>
           </View>
 
@@ -256,10 +287,15 @@ const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   content: { padding: 28, paddingBottom: 60 },
   contentMobile: { padding: 16, paddingBottom: 80 },
-  header: { marginBottom: 28 },
+  header: { marginBottom: 28, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 },
   title: { fontSize: 28, fontWeight: '800', color: C.text },
   subtitle: { fontSize: 15, color: C.primary, fontWeight: '600', marginTop: 2 },
-  date: { fontSize: 14, color: C.muted, marginTop: 4 },
+  date: { fontSize: 14, color: C.muted, fontWeight: '600', minWidth: 130, textAlign: 'center' },
+  monthNav: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  navBtn: { width: 30, height: 30, borderWidth: 1, borderColor: C.border, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: C.card },
+  navTxt: { fontSize: 18, color: C.text, lineHeight: 22 },
+  todayBtn: { borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.card },
+  todayTxt: { fontSize: 13, color: C.text, fontWeight: '500' },
   intro: { backgroundColor: C.primaryLight, borderRadius: 12, padding: 14, marginBottom: 20 },
   introTxt: { fontSize: 14, color: C.primary, fontWeight: '500' },
   acctCard: {

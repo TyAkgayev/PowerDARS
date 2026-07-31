@@ -258,9 +258,11 @@ export function AppProvider({ children }) {
     await deleteDoc(doc(db, 'workSchedule', dateStr));
   }, []);
 
-  // — DARS — filled out once per month, keyed by "YYYY-MM"
-  const saveDars = useCallback(async (entries) => {
-    const date = currentMonthStr();
+  // — DARS — filled out once per month, keyed by "YYYY-MM". Defaults to the
+  // current month but can target any month, so next month's bills can be
+  // planned ahead of time from within DARS.
+  const saveDars = useCallback(async (entries, monthStr) => {
+    const date = monthStr || currentMonthStr();
     await setDoc(doc(db, 'dars', date), {
       date,
       entries,

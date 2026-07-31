@@ -159,10 +159,8 @@ function DraggableBillRow({ cellsRef, onHoverChange, onDrop, onTapSchedule, isMo
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
-function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, cellsRef, billDragOverStr }) {
+function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, cellsRef, billDragOverStr, yr, mo, setYr, setMo }) {
   const today = new Date();
-  const [yr, setYr] = useState(today.getFullYear());
-  const [mo, setMo] = useState(today.getMonth());
   const [incomeModal, setIncomeModal] = useState(null);
   const [incomeInput, setIncomeInput] = useState('');
   const [incomeSource, setIncomeSource] = useState('');
@@ -1083,15 +1081,15 @@ function UpcomingBills({ bills }) {
 }
 
 // ─── MonthlyBillsTracker ──────────────────────────────────────────────────────
-function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, onTogglePaid, unscheduledCreditBills = [], onScheduleCreditBill, cellsRef, onHoverChange, isMobile }) {
+function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, onTogglePaid, unscheduledCreditBills = [], onScheduleCreditBill, cellsRef, onHoverChange, isMobile, yr, mo }) {
   const [billScheduleModal, setBillScheduleModal] = useState(null);
   const [billScheduleDate, setBillScheduleDate] = useState('');
   const today = new Date();
-  const todayDay = today.getDate();
-  const yr = today.getFullYear();
-  const mo = today.getMonth();
+  const isCurrentMonth = yr === today.getFullYear() && mo === today.getMonth();
+  const todayDay = isCurrentMonth ? today.getDate() : null;
   const yearMonth = `${yr}-${String(mo + 1).padStart(2, '0')}`;
   const monthName = MONTHS[mo];
+  const monthLabel = `${monthName} ${yr}`;
 
   // Bills from the bills collection
   const collectionBills = useMemo(() =>
@@ -1113,11 +1111,13 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
   const isBillPaid = useCallback((b) => (b.amount || 0) === 0 || paidIds.has(b.id), [paidIds]);
 
   // Index to insert TODAY line: first *dated* bill with day >= todayDay
-  // (undated/unscheduled bills sort first and are skipped here).
+  // (undated/unscheduled bills sort first and are skipped here). Only
+  // meaningful when viewing the actual current month.
   const todayLineAt = useMemo(() => {
+    if (!isCurrentMonth) return -1;
     const idx = monthBills.findIndex(b => b.dueDate && parseInt(b.dueDate.split('-')[2], 10) >= todayDay);
     return idx === -1 ? monthBills.length : idx;
-  }, [monthBills, todayDay]);
+  }, [monthBills, todayDay, isCurrentMonth]);
 
   const totalOwed = useMemo(() =>
     monthBills.filter(b => b.category !== 'income').reduce((s, b) => s + Math.abs(b.amount || 0), 0),
@@ -1145,7 +1145,7 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
   return (
     <View style={mbt.card}>
       <View style={mbt.header}>
-        <Text style={mbt.title}>{monthName} Bills</Text>
+        <Text style={mbt.title}>{monthLabel} Bills</Text>
         <View style={mbt.headerRight}>
           <Text style={mbt.paidCount}>{paidCount}/{monthBills.length} paid</Text>
           {totalOwed > 0 && (
@@ -1185,8 +1185,8 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
 
       {monthBills.length === 0 ? (
         <>
-          <TodayDivider />
-          <Text style={mbt.empty}>No bills scheduled for {monthName}.</Text>
+          {isCurrentMonth && <TodayDivider />}
+          <Text style={mbt.empty}>No bills scheduled for {monthLabel}.</Text>
         </>
       ) : (
         <>
@@ -1194,8 +1194,8 @@ function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, o
           {monthBills.map((bill, idx) => {
             const isUnscheduled = !bill.dueDate;
             const day = isUnscheduled ? null : parseInt(bill.dueDate.split('-')[2], 10);
-            const isPast = day !== null && day < todayDay;
-            const isToday = day !== null && day === todayDay;
+            const isPast = isCurrentMonth && day !== null && day < todayDay;
+            const isToday = isCurrentMonth && day !== null && day === todayDay;
             const isPaid = isBillPaid(bill);
             const isOverdue = isPast && !isPaid;
             const canSchedule = isUnscheduled && !isPaid;
@@ -1531,6 +1531,13 @@ export default function DashboardScreen() {
   const [payDeferDate, setPayDeferDate] = useState('');
   const [editingBankAccount, setEditingBankAccount] = useState(null);
 
+  // Which month the calendar (and everything keyed to "this month") is
+  // showing — shared with MonthlyBillsTracker so flipping months on the
+  // calendar flips the monthly bills list to match, for planning ahead.
+  const today = new Date();
+  const [viewYr, setViewYr] = useState(today.getFullYear());
+  const [viewMo, setViewMo] = useState(today.getMonth());
+
   const handleSaveBankBalance = async (accountId, values) => {
     await Promise.all(
       Object.entries(values).map(([fieldId, val]) => updateBankBalance(accountId, fieldId, val))
@@ -1562,13 +1569,13 @@ export default function DashboardScreen() {
     saveBillPayments({ ...(billPayments || {}), [yearMonth]: updated });
   }, [billPayments, saveBillPayments]);
 
-  // ── Account amounts due (from this month's DARS) → Bills checklist ──
+  // ── Account amounts due (from that month's DARS) → Bills checklist ──
   // Accounts no longer carry a due date; each month's amount due sits
   // here until it's dragged onto a calendar day to schedule the payment.
-  const currentYearMonth = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  }, []);
+  // Keyed to the *viewed* month (not necessarily today's), so flipping the
+  // calendar forward shows next month's planned bills once DARS has been
+  // filled out for it.
+  const viewedYearMonth = useMemo(() => `${viewYr}-${String(viewMo + 1).padStart(2, '0')}`, [viewYr, viewMo]);
 
   const creditAmountsDue = useMemo(() => {
     const paymentRe = /due|payment|bill|premium|amount/i;
@@ -1576,45 +1583,45 @@ export default function DashboardScreen() {
       .map(acc => {
         const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label));
         if (!amtField) return null;
-        const raw = darsHistory?.[currentYearMonth]?.entries?.[acc.id]?.[amtField.id];
+        const raw = darsHistory?.[viewedYearMonth]?.entries?.[acc.id]?.[amtField.id];
         const parsed = parseFloat(raw);
         const amount = raw === undefined || raw === '' || isNaN(parsed) ? 0 : parsed;
         return { accountId: acc.id, name: acc.name, icon: acc.icon, amount };
       })
       .filter(Boolean);
-  }, [accounts, darsHistory, currentYearMonth]);
+  }, [accounts, darsHistory, viewedYearMonth]);
 
-  const scheduledThisMonth = (creditSchedule || {})[currentYearMonth] || {};
+  const scheduledThisMonth = (creditSchedule || {})[viewedYearMonth] || {};
 
   const unscheduledCreditBills = useMemo(() =>
     creditAmountsDue
       .filter(b => !scheduledThisMonth[b.accountId])
-      .map(b => ({ id: `credit_${b.accountId}_${currentYearMonth}`, category: 'bills', ...b })),
-    [creditAmountsDue, scheduledThisMonth, currentYearMonth]
+      .map(b => ({ id: `credit_${b.accountId}_${viewedYearMonth}`, category: 'bills', ...b })),
+    [creditAmountsDue, scheduledThisMonth, viewedYearMonth]
   );
 
   const scheduledCreditBills = useMemo(() =>
     creditAmountsDue
       .filter(b => scheduledThisMonth[b.accountId])
       .map(b => ({
-        id: `credit_${b.accountId}_${currentYearMonth}`,
+        id: `credit_${b.accountId}_${viewedYearMonth}`,
         name: b.name, icon: b.icon, amount: b.amount, category: 'bills',
         dueDate: scheduledThisMonth[b.accountId],
       })),
-    [creditAmountsDue, scheduledThisMonth, currentYearMonth]
+    [creditAmountsDue, scheduledThisMonth, viewedYearMonth]
   );
 
   const handleScheduleCreditBill = useCallback((accountId, dateStr, amount, name) => {
     saveCreditSchedule({
       ...(creditSchedule || {}),
-      [currentYearMonth]: { ...(scheduledThisMonth || {}), [accountId]: dateStr },
+      [viewedYearMonth]: { ...(scheduledThisMonth || {}), [accountId]: dateStr },
     });
     const newExp = { ...(projectedExpenses || {}) };
     const raw = newExp[dateStr];
     const existing = Array.isArray(raw) ? raw : raw ? [raw] : [];
     newExp[dateStr] = [...existing, { amount, name }];
     saveProjectedExpenses(newExp);
-  }, [creditSchedule, scheduledThisMonth, currentYearMonth, projectedExpenses, saveProjectedExpenses, saveCreditSchedule]);
+  }, [creditSchedule, scheduledThisMonth, viewedYearMonth, projectedExpenses, saveProjectedExpenses, saveCreditSchedule]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -1640,8 +1647,8 @@ export default function DashboardScreen() {
       {isMobile ? (
         // ── Mobile: full mobile layout ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
-          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
+          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} onEditAccount={setEditingBankAccount} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
@@ -1655,9 +1662,9 @@ export default function DashboardScreen() {
       ) : isNarrow ? (
         // ── Narrow desktop: calendar full-width on top, panels stacked below ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
-          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
+          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} onEditAccount={setEditingBankAccount} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
@@ -1671,11 +1678,11 @@ export default function DashboardScreen() {
         // ── Wide desktop: two-column side-by-side ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} />
+            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
-            <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} />
+            <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
             <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} onEditAccount={setEditingBankAccount} />
             <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
             <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
