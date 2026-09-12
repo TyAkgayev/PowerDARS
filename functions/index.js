@@ -72,7 +72,7 @@ exports.exchangePublicToken = onRequest(
   async (req, res) => {
     cors(req, res, async () => {
       try {
-        const { public_token, accountId } = req.body;
+        const { public_token, accountId, plaidAccountId } = req.body;
         if (!public_token || !accountId) {
           return res.status(400).json({ error: 'public_token and accountId required' });
         }
@@ -81,11 +81,12 @@ exports.exchangePublicToken = onRequest(
         const response = await plaid.itemPublicTokenExchange({ public_token });
         const { access_token, item_id } = response.data;
 
-        // Store access token server-side in a protected collection
+        // Store access token + the specific Plaid account ID the user selected
         await db.collection('plaidItems').doc(accountId).set({
           access_token,
           item_id,
           accountId,
+          plaidAccountId: plaidAccountId || null,
           linkedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
@@ -99,8 +100,9 @@ exports.exchangePublicToken = onRequest(
 );
 
 // ── syncBalances ───────────────────────────────────────────────────────────────
-// Fetches the latest balances for all linked accounts and writes them into
-// the existing dars/today document so the dashboard reflects real data.
+// Fetches live balances from Plaid and writes them to settings/plaidBalances.
+// Plaid-linked accounts are never overwritten in DARS — the dashboard reads
+// balances directly from this document instead.
 exports.syncBalances = onRequest(
   { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true, invoker: 'public' },
   async (req, res) => {
@@ -108,55 +110,91 @@ exports.syncBalances = onRequest(
       try {
         const plaid = getPlaidClient(PLAID_CLIENT_ID.value(), PLAID_SECRET.value());
 
-        // Fetch all linked Plaid items
         const itemsSnap = await db.collection('plaidItems').get();
         if (itemsSnap.empty) return res.json({ synced: 0 });
 
-        // Fetch current account metadata to map Plaid accounts → app accounts
-        const accountsSnap = await db.collection('accounts').get();
-        const appAccounts = accountsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const liveBalances = {};
 
-        const today = new Date();
-        const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
-
-        // Load or create today's DARS entry
-        const darsRef = db.collection('dars').doc(dateStr);
-        const darsSnap = await darsRef.get();
-        const entries = darsSnap.exists ? (darsSnap.data().entries || {}) : {};
-
-        let synced = 0;
         for (const itemDoc of itemsSnap.docs) {
-          const { access_token, accountId } = itemDoc.data();
+          const { access_token, accountId, plaidAccountId } = itemDoc.data();
 
           const balRes = await plaid.accountsBalanceGet({ access_token });
-          const plaidAccounts = balRes.data.accounts;
+          const accounts = balRes.data.accounts;
+          if (!accounts.length) continue;
 
-          // Match each Plaid account back to the app account by stored mapping,
-          // or fall back to matching by accountId field on the item doc.
-          const appAcc = appAccounts.find(a => a.id === accountId);
-          if (!appAcc) continue;
+          // Match the exact account the user selected; fall back to first depository, then first account
+          const plaidAcc = (plaidAccountId && accounts.find(a => a.account_id === plaidAccountId))
+            || accounts.find(a => a.type === 'depository')
+            || accounts[0];
 
-          // Use the first Plaid account's current balance
-          const plaidAcc = plaidAccounts[0];
-          if (!plaidAcc) continue;
-
-          const balance = plaidAcc.balances.current ?? plaidAcc.balances.available ?? 0;
-
-          // Find the currency field on this account and update it
-          const currencyField = (appAcc.fields || []).find(f => f.type === 'currency');
-          if (!currencyField) continue;
-
-          if (!entries[accountId]) entries[accountId] = {};
-          entries[accountId][currencyField.id] = String(balance);
-          synced++;
+          const balance = plaidAcc.balances.available ?? plaidAcc.balances.current ?? 0;
+          liveBalances[accountId] = balance;
+          console.log(`Synced ${accountId}: ${plaidAcc.name} (${plaidAcc.subtype}) = ${balance}`);
         }
 
-        await darsRef.set({ date: dateStr, entries, syncedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await db.collection('settings').doc('plaidBalances').set({
+          balances: liveBalances,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
 
-        res.json({ synced, date: dateStr });
+        res.json({ synced: Object.keys(liveBalances).length });
       } catch (err) {
         console.error('syncBalances error:', err.response?.data || err.message);
         res.status(500).json({ error: 'Failed to sync balances' });
+      }
+    });
+  }
+);
+
+// ── getTransactions ────────────────────────────────────────────────────────────
+// Returns last 30 days of transactions across all linked Plaid items.
+exports.getTransactions = onRequest(
+  { secrets: [PLAID_CLIENT_ID, PLAID_SECRET], cors: true, invoker: 'public' },
+  async (req, res) => {
+    cors(req, res, async () => {
+      try {
+        const plaid = getPlaidClient(PLAID_CLIENT_ID.value(), PLAID_SECRET.value());
+        const itemsSnap = await db.collection('plaidItems').get();
+        if (itemsSnap.empty) return res.json({ transactions: [] });
+
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+        const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+        const all = [];
+        for (const itemDoc of itemsSnap.docs) {
+          const { access_token, accountId } = itemDoc.data();
+          try {
+            const resp = await plaid.transactionsGet({
+              access_token,
+              start_date: fmt(startDate),
+              end_date: fmt(endDate),
+              options: { count: 100, offset: 0 },
+            });
+            resp.data.transactions.forEach(tx => {
+              all.push({
+                id: tx.transaction_id,
+                accountId,
+                name: tx.merchant_name || tx.name,
+                amount: tx.amount,
+                date: tx.date,
+                category: tx.personal_finance_category?.primary || tx.category?.[0] || 'Other',
+                subcategory: tx.personal_finance_category?.detailed || tx.category?.[1] || '',
+                channel: tx.payment_channel || '',
+                pending: tx.pending,
+              });
+            });
+          } catch (e) {
+            console.error(`Failed transactions for ${accountId}:`, e.message);
+          }
+        }
+
+        all.sort((a, b) => b.date.localeCompare(a.date));
+        res.json({ transactions: all });
+      } catch (err) {
+        console.error('getTransactions error:', err.message);
+        res.status(500).json({ error: err.message });
       }
     });
   }

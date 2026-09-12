@@ -68,7 +68,7 @@ function DayPicker({ visible, selected, onSelect, onClose }) {
   );
 }
 
-function AccountEntry({ account, values, onChange, color, isMobile }) {
+function AccountEntry({ account, values, onChange, color, isMobile, isPlaidLinked, plaidBalance }) {
   const [pickerFieldId, setPickerFieldId] = useState(null);
 
   return (
@@ -83,38 +83,55 @@ function AccountEntry({ account, values, onChange, color, isMobile }) {
         <View style={[s.acctIcon, { backgroundColor: color + '20' }]}>
           <Text style={s.acctIconTxt}>{account.icon || '🏦'}</Text>
         </View>
-        <View>
-          <Text style={s.acctName}>{account.name}</Text>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={s.acctName}>{account.name}</Text>
+            {isPlaidLinked && (
+              <View style={s.plaidBadge}>
+                <Text style={s.plaidBadgeTxt}>🔗 Auto-synced via Plaid</Text>
+              </View>
+            )}
+          </View>
           <Text style={s.acctType}>{account.type}{account.lastFour ? ` •••• ${account.lastFour}` : ''}</Text>
         </View>
       </View>
 
       <View style={s.fields}>
-        {(account.fields || []).map(field => (
-          <View key={field.id} style={[s.fieldRow, isMobile && s.fieldRowMobile]}>
-            <Text style={[s.fieldLabel, isMobile && s.fieldLabelMobile]}>{field.label}</Text>
-            {field.type === 'date' ? (
-              <TouchableOpacity
-                style={[s.fieldInput, isMobile && s.fieldInputMobile, s.dayTouchable]}
-                onPress={() => setPickerFieldId(field.id)}
-              >
-                <Text style={values?.[field.id] ? s.dayVal : s.dayPlaceholder}>
-                  {values?.[field.id] ? `Day ${values[field.id]}` : 'Tap to select'}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <TextInput
-                style={[s.fieldInput, isMobile && s.fieldInputMobile]}
-                value={values?.[field.id] !== undefined ? String(values[field.id]) : ''}
-                onChangeText={v => onChange(field.id, v)}
-                keyboardType={field.type === 'currency' || field.type === 'number' ? 'decimal-pad' : 'default'}
-                placeholder={field.type === 'currency' ? '0.00' : '—'}
-                placeholderTextColor={C.faint}
-              />
-            )}
-            {!isMobile && field.type === 'currency' && <Text style={s.fieldPrefix}>$</Text>}
-          </View>
-        ))}
+        {(account.fields || []).map(field => {
+          const isLockedCurrency = isPlaidLinked && field.type === 'currency';
+          return (
+            <View key={field.id} style={[s.fieldRow, isMobile && s.fieldRowMobile]}>
+              <Text style={[s.fieldLabel, isMobile && s.fieldLabelMobile]}>{field.label}</Text>
+              {isLockedCurrency ? (
+                <View style={[s.fieldInput, isMobile && s.fieldInputMobile, s.fieldLocked]}>
+                  <Text style={s.fieldLockedTxt}>
+                    {plaidBalance != null ? `$${parseFloat(plaidBalance).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : 'Syncing…'}
+                  </Text>
+                  <Text style={s.fieldLockedTag}>Live</Text>
+                </View>
+              ) : field.type === 'date' ? (
+                <TouchableOpacity
+                  style={[s.fieldInput, isMobile && s.fieldInputMobile, s.dayTouchable]}
+                  onPress={() => setPickerFieldId(field.id)}
+                >
+                  <Text style={values?.[field.id] ? s.dayVal : s.dayPlaceholder}>
+                    {values?.[field.id] ? `Day ${values[field.id]}` : 'Tap to select'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TextInput
+                  style={[s.fieldInput, isMobile && s.fieldInputMobile]}
+                  value={values?.[field.id] !== undefined ? String(values[field.id]) : ''}
+                  onChangeText={v => onChange(field.id, v)}
+                  keyboardType={field.type === 'currency' || field.type === 'number' ? 'decimal-pad' : 'default'}
+                  placeholder={field.type === 'currency' ? '0.00' : '—'}
+                  placeholderTextColor={C.faint}
+                />
+              )}
+              {!isMobile && field.type === 'currency' && !isLockedCurrency && <Text style={s.fieldPrefix}>$</Text>}
+            </View>
+          );
+        })}
         {(!account.fields || account.fields.length === 0) && (
           <Text style={s.noFields}>No fields defined. Edit this account to add fields.</Text>
         )}
@@ -185,7 +202,7 @@ function SubmittedView({ darsEntry, accounts, onEdit }) {
 }
 
 export default function DARSScreen() {
-  const { accounts, saveDars, getTodaysDars, setCurrentScreen } = useApp();
+  const { accounts, saveDars, getTodaysDars, setCurrentScreen, plaidLinkedIds, plaidBalances } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const todaysDars = getTodaysDars();
@@ -275,6 +292,8 @@ export default function DARSScreen() {
                       onChange={(fieldId, val) => handleChange(acc.id, fieldId, val)}
                       color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
                       isMobile={isMobile}
+                      isPlaidLinked={plaidLinkedIds?.has(acc.id)}
+                      plaidBalance={plaidBalances?.[acc.id]}
                     />
                   );
                 })}
@@ -337,6 +356,11 @@ const s = StyleSheet.create({
   dayTouchable: { justifyContent: 'center' },
   dayVal: { fontSize: 15, color: C.text },
   dayPlaceholder: { fontSize: 15, color: C.faint },
+  fieldLocked: { backgroundColor: '#F0FDF4', borderColor: '#86EFAC', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  fieldLockedTxt: { fontSize: 15, color: '#15803D', fontWeight: '600' },
+  fieldLockedTag: { fontSize: 11, color: '#16A34A', fontWeight: '700', backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  plaidBadge: { backgroundColor: '#DCFCE7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  plaidBadgeTxt: { fontSize: 11, color: '#15803D', fontWeight: '600' },
   footer: { flexDirection: 'row', gap: 12, marginTop: 24 },
   cancelBtn: { borderWidth: 1, borderColor: C.border, borderRadius: 12, paddingVertical: 16, paddingHorizontal: 28 },
   cancelTxt: { fontSize: 16, color: C.muted, fontWeight: '500' },

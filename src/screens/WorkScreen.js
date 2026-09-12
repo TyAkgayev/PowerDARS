@@ -72,10 +72,10 @@ function PhoneModal({ visible, currentPhone, onSave, onClose }) {
 }
 
 // ─── Calendar Day Cell ───────────────────────────────────────────────────────
-function DayCell({ day, year, month, entry, activeShift, location, onPress, onDelete, isMobile, isToday }) {
-  const shift = entry ? getShiftById(entry.shift) : null;
-  const isEmpty = !entry;
-  const isClickable = !!activeShift;
+function DayCell({ day, year, month, entry, activeShift, location, onPress, onDelete, isMobile, isToday, isPast }) {
+  const shift = (!isPast && entry) ? getShiftById(entry.shift) : null;
+  const isEmpty = !shift;
+  const isClickable = !!activeShift && !isPast;
 
   return (
     <TouchableOpacity
@@ -85,14 +85,15 @@ function DayCell({ day, year, month, entry, activeShift, location, onPress, onDe
         isClickable && isEmpty && dc.cellClickable,
         !day && dc.cellEmpty,
         isToday && dc.cellToday,
+        isPast && dc.cellPast,
       ]}
-      onPress={() => day && onPress(day)}
-      activeOpacity={day ? 0.7 : 1}
-      disabled={!day}
+      onPress={() => day && !isPast && onPress(day)}
+      activeOpacity={day && !isPast ? 0.7 : 1}
+      disabled={!day || isPast}
     >
       {day ? (
         <>
-          <Text style={[dc.dayNum, shift && { color: shift.color }, isToday && dc.dayNumToday]}>{day}</Text>
+          <Text style={[dc.dayNum, shift && { color: shift.color }, isToday && dc.dayNumToday, isPast && dc.dayNumPast]}>{day}</Text>
           {shift && (
             <View style={[dc.shiftTag, { backgroundColor: shift.color + '20', borderColor: shift.color }]}>
               <Text style={[dc.shiftTxt, { color: shift.color }]} numberOfLines={1}>
@@ -255,6 +256,11 @@ export default function WorkScreen() {
             const ds = day ? dateStr(year, month, day) : null;
             const entry = ds ? workSchedule[ds] : null;
             const isTodayCell = !!day && day === today.getDate() && year === today.getFullYear() && month === today.getMonth();
+            const isPastCell = !!day && (
+              year < today.getFullYear() ||
+              (year === today.getFullYear() && month < today.getMonth()) ||
+              (year === today.getFullYear() && month === today.getMonth() && day < today.getDate())
+            );
             return (
               <View key={i} style={[s.cellWrapper, isMobile && s.cellWrapperMobile]}>
                 <DayCell
@@ -268,6 +274,7 @@ export default function WorkScreen() {
                   onDelete={handleDelete}
                   isMobile={isMobile}
                   isToday={isTodayCell}
+                  isPast={isPastCell}
                 />
               </View>
             );
@@ -375,6 +382,8 @@ const dc = StyleSheet.create({
   addHint: { fontSize: 18, color: C.primary, textAlign: 'center', marginTop: 4, opacity: 0.4 },
   cellToday: { backgroundColor: '#EEF2FF', borderTopWidth: 2, borderTopColor: '#4361EE' },
   dayNumToday: { color: '#4361EE', fontWeight: '800' },
+  cellPast: { opacity: 0.4 },
+  dayNumPast: { color: C.faint },
 });
 
 const m = StyleSheet.create({

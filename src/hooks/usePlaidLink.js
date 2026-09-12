@@ -20,14 +20,16 @@ function loadPlaidScript() {
 }
 
 function getRedirectUri() {
-  return window.location.origin + window.location.pathname.replace(/\/$/, '') || window.location.origin + '/';
+  const uri = window.location.origin + (window.location.pathname.replace(/\/$/, '') || '/');
+  return uri.startsWith('https://') ? uri : null;
 }
 
 async function initPlaidLink({ accountId, onSuccess, receivedRedirectUri }) {
+  const redirectUri = getRedirectUri();
   const res = await fetch(FUNCTION_URLS.createLinkToken, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ redirect_uri: getRedirectUri() }),
+    body: JSON.stringify(redirectUri ? { redirect_uri: redirectUri } : {}),
   });
   const tokenData = await res.json();
   if (!res.ok) {
@@ -45,10 +47,12 @@ async function initPlaidLink({ accountId, onSuccess, receivedRedirectUri }) {
     ...(receivedRedirectUri ? { receivedRedirectUri } : {}),
     onSuccess: async (public_token, metadata) => {
       sessionStorage.removeItem(OAUTH_ACCOUNT_KEY);
+      // Pass the specific Plaid account ID the user selected so sync can match exactly
+      const plaidAccountId = metadata?.accounts?.[0]?.id ?? null;
       const ex = await fetch(FUNCTION_URLS.exchangePublicToken, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ public_token, accountId }),
+        body: JSON.stringify({ public_token, accountId, plaidAccountId }),
       });
       if (!ex.ok) throw new Error('Token exchange failed');
       onSuccess?.(metadata);

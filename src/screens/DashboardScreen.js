@@ -77,6 +77,59 @@ function Sparkline({ data = [], color = '#4361EE', width = 90, height = 36 }) {
   return <Image source={{ uri: 'data:image/svg+xml;base64,' + btoa(svg) }} style={{ width, height }} />;
 }
 
+// ─── ExpenseChip (projected expenses — delete only) ──────────────────────────
+function ExpenseChip({ entry, eidx, dateStr, onDelete }) {
+  const delRef = useRef(null);
+  const onDeleteRef = useRef(onDelete);
+  onDeleteRef.current = onDelete;
+
+  useEffect(() => {
+    const del = delRef.current;
+    if (!del) return;
+    const fn = (e) => { e.stopPropagation(); onDeleteRef.current(dateStr, eidx); };
+    del.addEventListener('click', fn);
+    return () => del.removeEventListener('click', fn);
+  }, []);
+
+  const eAmt = parseFloat(entry.amount) || 0;
+  if (eAmt <= 0) return null;
+  return (
+    <View style={[cal.chip, { backgroundColor: '#FEE2E2', flexDirection: 'row', alignItems: 'center' }]}>
+      <Text style={[cal.chipName, { color: C.bills, flex: 1 }]} numberOfLines={1}>💸 {entry.name || 'Expense'}</Text>
+      <Text style={[cal.chipAmt, { color: C.bills }]}>-${eAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
+      <View ref={delRef} style={{ paddingLeft: 6, paddingVertical: 4, cursor: 'pointer' }}>
+        <Text style={{ fontSize: 10, color: C.bills, opacity: 0.6 }}>✕</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── BillChip (DARS/account expenses — left-click to defer) ──────────────────
+function BillChip({ ev, dateStr, insuf, onDefer }) {
+  const chipRef = useRef(null);
+  const onDeferRef = useRef(onDefer);
+  onDeferRef.current = onDefer;
+
+  useEffect(() => {
+    const el = chipRef.current;
+    if (!el) return;
+    const fn = () => onDeferRef.current({ entry: ev, dateStr, isBillEvent: true });
+    el.addEventListener('click', fn);
+    return () => el.removeEventListener('click', fn);
+  }, []);
+
+  const textCol = insuf ? C.bills : (CAT_COLOR[ev.category] || C.other);
+  const bg = insuf ? '#FEE2E2' : '#FEF9C3';
+  const sign = ev.category === 'income' ? '+' : '-';
+  return (
+    <View ref={chipRef} style={[cal.chip, { backgroundColor: bg, cursor: 'pointer' }, insuf && cal.chipInsuf]}>
+      {insuf && <Text style={cal.warnTxt}>⚠ </Text>}
+      <Text style={[cal.chipName, { color: textCol }]} numberOfLines={1}>{ev.name}</Text>
+      <Text style={[cal.chipAmt, { color: textCol }]}>{sign}${Math.abs(ev.amount).toFixed(0)}</Text>
+    </View>
+  );
+}
+
 // ─── Calendar ────────────────────────────────────────────────────────────────
 function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems }) {
   const today = new Date();
@@ -117,7 +170,6 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
   const [loanRepayDate, setLoanRepayDate] = useState('');
 
   // ── Defer system ─────────────────────────────────────────────────────────
-  const [contextMenu, setContextMenu] = useState(null);
   const [deferModal, setDeferModal] = useState(null);
   const [deferDate, setDeferDate] = useState('');
   const [deferIndefinite, setDeferIndefinite] = useState(false);
@@ -350,13 +402,25 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
     return map;
   }, [accounts, darsHistory, yr, mo]);
 
+  // ── Suppressed bill event keys (deferred items from DARS/accounts) ───────────
+  const suppressedBillKeys = useMemo(() => {
+    const set = new Set();
+    (deferredItems || []).forEach(item => {
+      if (item.isBillEvent && item.eventId && item.originalDate) {
+        set.add(`${item.eventId}-${item.originalDate}`);
+      }
+    });
+    return set;
+  }, [deferredItems]);
+
   // ── Financial projection ──────────────────────────────────────────────────
   const projection = useMemo(() => {
     const bankAccts = (accounts || []).filter(a => BANK_TYPES.includes(a.type));
     const startBalance = bankAccts.reduce((sum, acc) => {
-      const pf = acc.fields?.find(f => f.type === 'currency');
+      const pf = acc.fields?.[0];
       if (!pf) return sum;
-      return sum + (parseFloat(getLatestValue(darsHistory || {}, acc.id, pf.id)) || 0);
+      const val = parseFloat(getLatestValue(darsHistory || {}, acc.id, pf.id));
+      return isNaN(val) ? sum : sum + val;
     }, 0);
     if (bankAccts.length === 0) return {};
 
@@ -523,14 +587,17 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
   // ── Defer handlers ────────────────────────────────────────────────────────
   const handleDefer = () => {
     if (!deferModal) return;
-    const { entry, dateStr, entryIdx } = deferModal;
-    handleDeleteExpenseEntry(dateStr, entryIdx);
+    const { entry, dateStr, entryIdx, isBillEvent } = deferModal;
+    if (!isBillEvent) {
+      handleDeleteExpenseEntry(dateStr, entryIdx);
+    }
     const newDeferred = [...(deferredItems || []), {
       id: Date.now().toString(),
       name: entry.name || 'Expense',
       amount: entry.amount,
       dateDeferred: dateStr,
       deferUntil: deferIndefinite ? null : deferDate,
+      ...(isBillEvent ? { isBillEvent: true, eventId: entry.id, originalDate: dateStr } : {}),
     }];
     saveDeferredItems(newDeferred);
     setDeferModal(null);
@@ -614,18 +681,6 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
         </View>
       </Modal>
 
-      {/* Context menu (right-click on expense chip) */}
-      {contextMenu && (
-        <Modal transparent visible animationType="none" onRequestClose={() => setContextMenu(null)}>
-          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setContextMenu(null)} />
-          <View style={[cal.ctxMenu, { top: contextMenu.y, left: contextMenu.x }]}>
-            <TouchableOpacity style={cal.ctxItem} onPress={() => { setDeferModal(contextMenu); setContextMenu(null); }}>
-              <Text style={cal.ctxItemTxt}>📌 Defer this expense</Text>
-            </TouchableOpacity>
-          </View>
-        </Modal>
-      )}
-
       {/* Defer modal */}
       <Modal visible={deferModal !== null} transparent animationType="fade" onRequestClose={() => setDeferModal(null)}>
         <View style={cal.incOverlay}>
@@ -708,7 +763,10 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
         <View key={wi} style={cal.week}>
           {cells.slice(wi * 7, wi * 7 + 7).map((cell, di) => {
             const isToday = cell.cur && cell.day === today.getDate() && mo === today.getMonth() && yr === today.getFullYear();
-            const events = cell.str ? [...(billsByDate[cell.str] || []), ...(accountEventsByDate[cell.str] || [])] : [];
+            const events = cell.str ? [
+              ...(billsByDate[cell.str] || []).filter(ev => !suppressedBillKeys.has(`${ev.id}-${cell.str}`)),
+              ...(accountEventsByDate[cell.str] || []).filter(ev => !suppressedBillKeys.has(`${ev.id}-${cell.str}`)),
+            ] : [];
             const proj = cell.str ? projection[cell.str] : null;
             const incRaw = cell.str ? projectedIncome[cell.str] : null;
             const incEntries = incRaw == null ? []
@@ -754,35 +812,31 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
                     );
                   });
                   expEntries.forEach((entry, eidx) => {
-                    const eAmt = parseFloat(entry.amount) || 0;
-                    if (eAmt <= 0) return;
                     rows.push(
-                      <View
+                      <ExpenseChip
                         key={`exp-${eidx}`}
-                        style={[cal.chip, { backgroundColor: '#FEE2E2', flexDirection: 'row', alignItems: 'center' }]}
-                        onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, entry, dateStr: cell.str, entryIdx: eidx }); }}
-                      >
-                        <Text style={[cal.chipName, { color: C.bills, flex: 1 }]} numberOfLines={1}>💸 {entry.name || 'Expense'}</Text>
-                        <Text style={[cal.chipAmt, { color: C.bills }]}>-${eAmt.toLocaleString('en-US', { maximumFractionDigits: 0 })}</Text>
-                        <TouchableOpacity onPress={() => handleDeleteExpenseEntry(cell.str, eidx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                          <Text style={{ fontSize: 10, color: C.bills, marginLeft: 4, opacity: 0.6 }}>✕</Text>
-                        </TouchableOpacity>
-                      </View>
+                        entry={entry}
+                        eidx={eidx}
+                        dateStr={cell.str}
+                        onDelete={handleDeleteExpenseEntry}
+                      />
                     );
                   });
                   const slots = 3 - incEntries.length - expEntries.length;
                   events.slice(0, slots).forEach((ev, ei) => {
                     const insuf = proj?.insufficient?.has(ev.id);
-                    const textCol = insuf ? C.bills : (CAT_COLOR[ev.category] || C.other);
-                    const bg = insuf ? '#FEE2E2' : (ev.category === 'income' ? '#DCFCE7' : '#DCFCE7');
-                    const sign = ev.category === 'income' ? '+' : '-';
-                    rows.push(
-                      <View key={ei} style={[cal.chip, { backgroundColor: bg }, insuf && cal.chipInsuf]}>
-                        {insuf && <Text style={cal.warnTxt}>⚠ </Text>}
-                        <Text style={[cal.chipName, { color: textCol }]} numberOfLines={1}>{ev.name}</Text>
-                        <Text style={[cal.chipAmt, { color: textCol }]}>{sign}${Math.abs(ev.amount).toFixed(0)}</Text>
-                      </View>
-                    );
+                    if (ev.category === 'income') {
+                      rows.push(
+                        <View key={ei} style={[cal.chip, { backgroundColor: '#DCFCE7' }]}>
+                          <Text style={[cal.chipName, { color: C.income }]} numberOfLines={1}>{ev.name}</Text>
+                          <Text style={[cal.chipAmt, { color: C.income }]}>+${Math.abs(ev.amount).toFixed(0)}</Text>
+                        </View>
+                      );
+                    } else {
+                      rows.push(
+                        <BillChip key={ei} ev={ev} dateStr={cell.str} insuf={insuf} onDefer={setDeferModal} />
+                      );
+                    }
                   });
                   const overflow = events.length - slots;
                   if (overflow > 0) rows.push(<Text key="ov" style={cal.overflow}>+{overflow} more</Text>);
@@ -841,9 +895,35 @@ function getSparklineData(darsHistory, accountId, fieldId) {
     .filter(v => v !== undefined && v !== null && v !== '');
 }
 
-function AccountRow({ acc, darsHistory, color, isMobile }) {
+function LiveDot() {
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.25, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+  return (
+    <Animated.View style={{
+      width: 8, height: 8, borderRadius: 4,
+      backgroundColor: '#22C55E',
+      marginLeft: 6,
+      alignSelf: 'center',
+      opacity: pulse,
+      shadowColor: '#22C55E',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 1,
+      shadowRadius: 4,
+    }} />
+  );
+}
+
+function AccountRow({ acc, darsHistory, color, isMobile, isLive, plaidBalance }) {
   const pf = acc.fields?.find(f => f.type === 'currency') || acc.fields?.[0];
-  const val = pf ? getLatestValue(darsHistory, acc.id, pf.id) : null;
+  const rawVal = (isLive && plaidBalance != null) ? plaidBalance : (pf ? getLatestValue(darsHistory, acc.id, pf.id) : null);
+  const val = rawVal != null ? String(rawVal) : null;
   const spark = pf ? getSparklineData(darsHistory, acc.id, pf.id) : [];
   const isNeg = val !== null && parseFloat(val) < 0;
   return (
@@ -852,12 +932,15 @@ function AccountRow({ acc, darsHistory, color, isMobile }) {
         <IconView icon={acc.icon || ICONS[acc.type] || ICONS.checking} size={20} />
       </View>
       <View style={pnl.info}>
-        <Text style={pnl.acctName}>{acc.name}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={pnl.acctName}>{acc.name}</Text>
+          {isLive && <LiveDot />}
+        </View>
         {acc.lastFour && <Text style={pnl.acctSub}>•••• {acc.lastFour}</Text>}
         <Text style={[pnl.balance, isNeg && pnl.balanceNeg]}>
           {val !== null ? fmtCurrency(val) : '—'}
         </Text>
-        <Text style={pnl.balanceLabel}>{pf ? pf.label : 'Balance'}</Text>
+        <Text style={pnl.balanceLabel}>{pf ? pf.label : 'Balance'}{isLive ? ' · Live' : ''}</Text>
       </View>
       {!isMobile && <Sparkline data={spark} color={color} width={90} height={36} />}
     </View>
@@ -865,11 +948,14 @@ function AccountRow({ acc, darsHistory, color, isMobile }) {
 }
 
 // ─── BanksPanel ───────────────────────────────────────────────────────────────
-function BanksPanel({ accounts, darsHistory, isMobile }) {
+function BanksPanel({ accounts, darsHistory, isMobile, plaidLinkedIds, plaidBalances }) {
   const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
   const bankAccounts = accounts.filter(a => BANK_TYPES.includes(a.type));
 
   const netWorth = bankAccounts.reduce((sum, acc) => {
+    const isLive = plaidLinkedIds?.has(acc.id);
+    const pb = plaidBalances?.[acc.id];
+    if (isLive && pb != null) return sum + (parseFloat(pb) || 0);
     const pf = acc.fields?.[0];
     if (!pf) return sum;
     const val = getLatestValue(darsHistory, acc.id, pf.id);
@@ -889,6 +975,8 @@ function BanksPanel({ accounts, darsHistory, isMobile }) {
           darsHistory={darsHistory}
           color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
           isMobile={isMobile}
+          isLive={plaidLinkedIds?.has(acc.id)}
+          plaidBalance={plaidBalances?.[acc.id]}
         />
       ))}
       <View style={pnl.totalFooter}>
@@ -900,7 +988,7 @@ function BanksPanel({ accounts, darsHistory, isMobile }) {
 }
 
 // ─── AccountSection ────────────────────────────────────────────────────────────
-function AccountSection({ title, types, accounts, darsHistory, isMobile, footerLabel, footerColor }) {
+function AccountSection({ title, types, accounts, darsHistory, isMobile, footerLabel, footerColor, plaidLinkedIds, plaidBalances }) {
   const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
   const filtered = accounts.filter(a => types.includes(a.type));
   if (filtered.length === 0) return null;
@@ -926,6 +1014,8 @@ function AccountSection({ title, types, accounts, darsHistory, isMobile, footerL
           darsHistory={darsHistory}
           color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
           isMobile={isMobile}
+          isLive={plaidLinkedIds?.has(acc.id)}
+          plaidBalance={plaidBalances?.[acc.id]}
         />
       ))}
       {footerLabel && (
@@ -1164,25 +1254,103 @@ function DeferredPanel({ deferredItems, onPay }) {
   );
 }
 
+// ─── Mini calendar date picker ────────────────────────────────────────────────
+const CAL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const CAL_DAYS   = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+function MiniCalendarPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const today = new Date();
+  const parsed = value ? new Date(value + 'T00:00:00') : null;
+  const [yr, setYr] = useState(parsed ? parsed.getFullYear() : today.getFullYear());
+  const [mo, setMo] = useState(parsed ? parsed.getMonth() : today.getMonth());
+
+  const pad2 = n => String(n).padStart(2, '0');
+  const daysInMo = new Date(yr, mo + 1, 0).getDate();
+  const firstDay = new Date(yr, mo, 1).getDay();
+  const cells = Array(firstDay).fill(null);
+  for (let d = 1; d <= daysInMo; d++) cells.push(d);
+
+  const prevMo = () => { if (mo === 0) { setYr(y => y - 1); setMo(11); } else setMo(m => m - 1); };
+  const nextMo = () => { if (mo === 11) { setYr(y => y + 1); setMo(0); } else setMo(m => m + 1); };
+
+  const displayLabel = value
+    ? new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : 'Select due date…';
+
+  return (
+    <>
+      <TouchableOpacity style={[trk.input, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}
+        onPress={() => setOpen(true)} activeOpacity={0.7}>
+        <Text style={{ fontSize: 14, color: value ? C.text : C.faint }}>📅 {displayLabel}</Text>
+        {value && (
+          <TouchableOpacity onPress={() => onChange(null)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Text style={{ fontSize: 12, color: C.faint }}>✕</Text>
+          </TouchableOpacity>
+        )}
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setOpen(false)} />
+        <View style={mcp.box}>
+          {/* Nav */}
+          <View style={mcp.nav}>
+            <TouchableOpacity onPress={prevMo} style={mcp.navBtn}><Text style={mcp.navTxt}>‹</Text></TouchableOpacity>
+            <Text style={mcp.monthLbl}>{CAL_MONTHS[mo]} {yr}</Text>
+            <TouchableOpacity onPress={nextMo} style={mcp.navBtn}><Text style={mcp.navTxt}>›</Text></TouchableOpacity>
+          </View>
+          {/* Day headers */}
+          <View style={mcp.dayRow}>
+            {CAL_DAYS.map(d => <Text key={d} style={mcp.dayHdr}>{d}</Text>)}
+          </View>
+          {/* Grid */}
+          {Array.from({ length: Math.ceil(cells.length / 7) }, (_, wi) => (
+            <View key={wi} style={mcp.week}>
+              {cells.slice(wi * 7, wi * 7 + 7).map((day, di) => {
+                const ds = day ? `${yr}-${pad2(mo + 1)}-${pad2(day)}` : null;
+                const isSel = ds === value;
+                const isToday = day === today.getDate() && mo === today.getMonth() && yr === today.getFullYear();
+                return (
+                  <TouchableOpacity key={di} disabled={!day}
+                    style={[mcp.cell, isSel && mcp.cellSel, isToday && !isSel && mcp.cellToday]}
+                    onPress={() => { if (ds) { onChange(ds); setOpen(false); } }}>
+                    <Text style={[mcp.cellTxt, isSel && mcp.cellTxtSel, isToday && !isSel && { color: C.primary, fontWeight: '700' }]}>
+                      {day || ''}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+      </Modal>
+    </>
+  );
+}
+
 // ─── Countdown hook ───────────────────────────────────────────────────────────
 function useCountdown(dueDate) {
   const [label, setLabel] = useState('');
   useEffect(() => {
     const update = () => {
-      if (!dueDate) { setLabel(''); return; }
-      const now = new Date();
-      const due = new Date(dueDate + 'T23:59:59');
-      const diff = due - now;
+      if (!dueDate || typeof dueDate !== 'string' || !dueDate.trim()) { setLabel(''); return; }
+      const due = new Date(dueDate.trim() + 'T23:59:59');
+      if (isNaN(due.getTime())) { setLabel(''); return; }
+      const diff = due - new Date();
       if (diff <= 0) { setLabel('OVERDUE'); return; }
-      const days = Math.floor(diff / 86400000);
+      const days  = Math.floor(diff / 86400000);
       const hours = Math.floor((diff % 86400000) / 3600000);
-      const mins = Math.floor((diff % 3600000) / 60000);
-      if (days > 0) setLabel(`${days}d ${hours}h left`);
-      else if (hours > 0) setLabel(`${hours}h ${mins}m left`);
-      else setLabel(`${mins}m left`);
+      const mins  = Math.floor((diff % 3600000) / 60000);
+      const secs  = Math.floor((diff % 60000) / 1000);
+      const ms    = Math.floor((diff % 1000) / 10);
+      const msStr = String(ms).padStart(2, '0');
+      const secStr = `${secs}.${msStr}s`;
+      if (days > 0)       setLabel(`${days}d ${hours}h ${mins}m ${secStr} left`);
+      else if (hours > 0) setLabel(`${hours}h ${mins}m ${secStr} left`);
+      else                setLabel(`${mins}m ${secStr} left`);
     };
     update();
-    const id = setInterval(update, 30000);
+    const id = setInterval(update, 30);
     return () => clearInterval(id);
   }, [dueDate]);
   return label;
@@ -1191,21 +1359,38 @@ function useCountdown(dueDate) {
 function TimeSensitiveTask({ task, onToggle, onDelete }) {
   const countdown = useCountdown(task.dueDate);
   const isOverdue = countdown === 'OVERDUE';
+  const shakeX = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const shake = () => Animated.sequence([
+      Animated.timing(shakeX, { toValue: -6, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeX, { toValue: 6,  duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeX, { toValue: -4, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeX, { toValue: 4,  duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeX, { toValue: 0,  duration: 60, useNativeDriver: true }),
+    ]).start();
+    shake();
+    const id = setInterval(shake, 4000);
+    return () => clearInterval(id);
+  }, []);
+
   return (
-    <TouchableOpacity style={[trk.urgentBox, isOverdue && trk.urgentBoxOverdue]}
-      onPress={() => onToggle(task.id, task.completed)} activeOpacity={0.8}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={[trk.urgentTitle, task.completed && trk.taskDone]} numberOfLines={2}>{task.title}</Text>
-        <TouchableOpacity onPress={() => onDelete(task.id)} style={trk.delBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={trk.delTxt}>×</Text>
-        </TouchableOpacity>
-      </View>
-      {countdown ? (
-        <View style={[trk.countdownBadge, isOverdue && trk.countdownOverdue]}>
-          <Text style={[trk.countdownTxt, isOverdue && { color: '#fff' }]}>⏱ {countdown}</Text>
+    <Animated.View style={{ transform: [{ translateX: shakeX }] }}>
+      <TouchableOpacity style={[trk.urgentBox, isOverdue && trk.urgentBoxOverdue]}
+        onPress={() => onToggle(task.id, task.completed)} activeOpacity={0.8}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={[trk.urgentTitle, task.completed && trk.taskDone]} numberOfLines={2}>{task.title}</Text>
+          <TouchableOpacity onPress={() => onDelete(task.id)} style={trk.delBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={trk.delTxt}>×</Text>
+          </TouchableOpacity>
         </View>
-      ) : null}
-    </TouchableOpacity>
+        <View style={[trk.countdownBadge, isOverdue && trk.countdownOverdue, !countdown && trk.countdownEmpty]}>
+          <Text style={[trk.countdownTxt, isOverdue && { color: '#fff' }, !countdown && { color: C.faint }]}>
+            {countdown ? `⏱ ${countdown}` : '⏱ No due date set'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -1248,8 +1433,7 @@ function TaskTracker({ tasks, onToggle, onAdd, onDelete }) {
         <View style={trk.addForm}>
           <TextInput style={trk.input} placeholder="Task title..." value={title}
             onChangeText={setTitle} placeholderTextColor={C.faint} />
-          <TextInput style={trk.input} placeholder="Due date (YYYY-MM-DD)" value={dueDate}
-            onChangeText={setDueDate} placeholderTextColor={C.faint} />
+          <MiniCalendarPicker value={dueDate} onChange={v => setDueDate(v || '')} />
           <TouchableOpacity style={trk.tsRow} onPress={() => setTimeSensitive(v => !v)} activeOpacity={0.7}>
             <View style={[trk.checkbox, timeSensitive && trk.checkboxOn]}>
               {timeSensitive && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>✓</Text>}
@@ -1371,7 +1555,13 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments } = useApp();
+  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments, plaidLinkedIds, plaidBalances } = useApp();
+
+  // Auto-sync Plaid balances on mount when there are linked accounts
+  useEffect(() => {
+    if (!plaidLinkedIds || plaidLinkedIds.size === 0) return;
+    fetch('https://syncbalances-v5nh5hrtnq-uc.a.run.app', { method: 'POST' }).catch(() => {});
+  }, [plaidLinkedIds?.size]);
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const isNarrow = width < 1100;
@@ -1425,14 +1615,14 @@ export default function DashboardScreen() {
         <View style={s.colStack}>
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
           <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
-          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
-          <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Car" footerColor={C.bills} />
-          <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Phone" footerColor={C.bills} />
-          <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Loans" footerColor={C.bills} />
-          <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Credit" footerColor={C.bills} />
-          <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Other" footerColor={C.bills} />
+          <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Car" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Phone" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Loans" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Credit" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Other" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <UpcomingBills bills={bills} />
         </View>
       ) : isNarrow ? (
@@ -1441,13 +1631,13 @@ export default function DashboardScreen() {
           <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
-          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
-          <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
-          <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} />
-          <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Loans" footerColor={C.bills} />
-          <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Credit" footerColor={C.bills} />
-          <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Other" footerColor={C.bills} />
+          <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Loans" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Credit" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Other" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <UpcomingBills bills={bills} />
         </View>
       ) : (
@@ -1459,13 +1649,13 @@ export default function DashboardScreen() {
           </View>
           <View style={s.right}>
             <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
-            <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} />
+            <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
             <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
-            <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} />
-            <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} />
-            <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Loans" footerColor={C.bills} />
-            <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Credit" footerColor={C.bills} />
-            <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Other" footerColor={C.bills} />
+            <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+            <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+            <AccountSection title="Loans" types={['loan']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Loans" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+            <AccountSection title="Credit Cards" types={['credit']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Credit" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+            <AccountSection title="Other" types={['utility','subscription','other']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Other" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
             <UpcomingBills bills={bills} />
           </View>
         </View>
@@ -1664,11 +1854,12 @@ const trk = StyleSheet.create({
   urgentSection: { marginBottom: 10 },
   regularSection: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 10, marginTop: 4 },
   sectionLabel: { fontSize: 10, fontWeight: '800', color: '#EF4444', letterSpacing: 1, marginBottom: 8 },
-  urgentBox: { backgroundColor: '#FFF7F7', borderWidth: 1.5, borderColor: '#EF4444', borderRadius: 12, padding: 12, marginBottom: 8 },
-  urgentBoxOverdue: { backgroundColor: '#FEE2E2' },
+  urgentBox: { backgroundColor: '#FEE2E2', borderWidth: 2, borderColor: '#EF4444', borderRadius: 12, padding: 12, marginBottom: 8 },
+  urgentBoxOverdue: { backgroundColor: '#FECACA' },
   urgentTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: C.text },
   countdownBadge: { backgroundColor: '#FEE2E2', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, marginTop: 6, alignSelf: 'flex-start' },
   countdownOverdue: { backgroundColor: '#EF4444' },
+  countdownEmpty: { backgroundColor: '#F3F4F6' },
   countdownTxt: { fontSize: 12, fontWeight: '700', color: '#EF4444' },
 });
 
@@ -1697,4 +1888,26 @@ const mds = StyleSheet.create({
   cancelTxt: { fontSize: 15, color: C.muted, fontWeight: '500' },
   saveBtn: { flex: 1, backgroundColor: C.primary, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   saveTxt: { fontSize: 15, color: '#fff', fontWeight: '600' },
+});
+
+const mcp = StyleSheet.create({
+  box: {
+    position: 'absolute', top: '50%', left: '50%',
+    transform: [{ translateX: -160 }, { translateY: -220 }],
+    width: 320, backgroundColor: C.card, borderRadius: 16,
+    padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15, shadowRadius: 16, elevation: 10,
+  },
+  nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  navBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: C.bg },
+  navTxt: { fontSize: 20, color: C.primary, fontWeight: '700', lineHeight: 24 },
+  monthLbl: { fontSize: 15, fontWeight: '700', color: C.text },
+  dayRow: { flexDirection: 'row', marginBottom: 4 },
+  dayHdr: { flex: 1, textAlign: 'center', fontSize: 11, fontWeight: '600', color: C.faint },
+  week: { flexDirection: 'row' },
+  cell: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 6, margin: 1 },
+  cellSel: { backgroundColor: C.primary },
+  cellToday: { backgroundColor: C.primaryLight },
+  cellTxt: { fontSize: 13, color: C.text },
+  cellTxtSel: { color: '#fff', fontWeight: '700' },
 });

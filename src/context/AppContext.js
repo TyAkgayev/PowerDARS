@@ -28,6 +28,8 @@ export function AppProvider({ children }) {
   const [projectedExpenses, setProjectedExpenses] = useState({});
   const [deferredItems, setDeferredItems] = useState([]);
   const [billPayments, setBillPayments] = useState({});
+  const [plaidLinkedIds, setPlaidLinkedIds] = useState(new Set());
+  const [plaidBalances, setPlaidBalances] = useState({});
 
   // Accounts listener
   useEffect(() => {
@@ -142,6 +144,22 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'billPayments'), (snap) => {
       if (snap.exists()) setBillPayments(snap.data().payments || {});
+    });
+    return unsub;
+  }, []);
+
+  // Plaid linked accounts listener
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'plaidItems'), (snap) => {
+      setPlaidLinkedIds(new Set(snap.docs.map(d => d.id)));
+    });
+    return unsub;
+  }, []);
+
+  // Plaid live balances listener
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'plaidBalances'), (snap) => {
+      if (snap.exists()) setPlaidBalances(snap.data().balances || {});
     });
     return unsub;
   }, []);
@@ -264,6 +282,7 @@ export function AppProvider({ children }) {
       projectedExpenses, saveProjectedExpenses,
       deferredItems, saveDeferredItems,
       billPayments, saveBillPayments,
+      plaidLinkedIds, plaidBalances,
       currentScreen, setCurrentScreen,
       userName, saveUserName,
       addAccount, updateAccount, deleteAccount,

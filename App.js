@@ -10,6 +10,7 @@ import AccountsScreen from './src/screens/AccountsScreen';
 import CarScreen from './src/screens/CarScreen';
 import RNScreen from './src/screens/RNScreen';
 import WorkScreen from './src/screens/WorkScreen';
+import SpendingScreen from './src/screens/SpendingScreen';
 import { usePlaidLink } from './src/hooks/usePlaidLink';
 
 function MainApp() {
@@ -46,6 +47,7 @@ function MainApp() {
       case 'car':      return <CarScreen />;
       case 'rn':       return <RNScreen />;
       case 'work':     return <WorkScreen />;
+      case 'spending': return <SpendingScreen />;
       default:         return <DashboardScreen />;
     }
   };
