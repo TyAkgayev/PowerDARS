@@ -1,11 +1,33 @@
 import React, { useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Modal, TextInput, Alert, useWindowDimensions,
+  StyleSheet, Modal, TextInput, Alert, Platform, useWindowDimensions,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
 import { ICONS } from '../config/icons';
 import { usePlaidLink } from '../hooks/usePlaidLink';
+
+// react-native-web's Alert.alert is a no-op stub, so on web these dialogs
+// must go through window.confirm/alert instead or they silently do nothing.
+function confirmAsync(title, message) {
+  if (Platform.OS === 'web') {
+    return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise(resolve => {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Delete', style: 'destructive', onPress: () => resolve(true) },
+    ]);
+  });
+}
+
+function notify(title, message) {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
 
 const C = {
   primary: '#4361EE',
@@ -37,7 +59,6 @@ const ACCT_TYPES = [
 const FIELD_TYPES = [
   { id: 'currency', label: 'Currency ($)' },
   { id: 'number',   label: 'Number' },
-  { id: 'date',     label: 'Day of Month (1–31)' },
   { id: 'text',     label: 'Text' },
   { id: 'percent',  label: 'Percentage (%)' },
 ];
@@ -45,17 +66,19 @@ const FIELD_TYPES = [
 const PALETTE = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4','#EC4899','#8B5CF6'];
 const ACCT_COLORS = PALETTE;
 
+// No due-day fields — every account is paid on whatever day you choose,
+// scheduled manually from the Bills checklist instead of on autopay.
 const SUGGESTED_FIELDS = {
   checking:     [{ label: 'Balance', type: 'currency' }, { label: 'Available Balance', type: 'currency' }],
   savings:      [{ label: 'Balance', type: 'currency' }],
-  credit:       [{ label: 'Current Balance', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Minimum Due', type: 'currency' }, { label: 'Credit Limit', type: 'currency' }],
+  credit:       [{ label: 'Amount Due', type: 'currency' }],
   investment:   [{ label: 'Portfolio Value', type: 'currency' }, { label: 'Daily Change', type: 'currency' }],
-  utility:      [{ label: 'Amount Due', type: 'currency' }, { label: 'Due Day', type: 'date' }],
-  subscription: [{ label: 'Monthly Amount', type: 'currency' }, { label: 'Next Bill Day', type: 'date' }],
-  phone:        [{ label: 'Monthly Bill', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Account Number', type: 'text' }],
-  loan:         [{ label: 'Remaining Balance', type: 'currency' }, { label: 'Monthly Payment', type: 'currency' }, { label: 'Due Day', type: 'date' }],
-  car_lease:    [{ label: 'Monthly Payment', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Remaining Payments', type: 'number' }, { label: 'Lease End Date', type: 'text' }],
-  car_insurance:[{ label: 'Monthly Premium', type: 'currency' }, { label: 'Due Day', type: 'date' }, { label: 'Policy Number', type: 'text' }, { label: 'Coverage End Date', type: 'text' }],
+  utility:      [{ label: 'Amount Due', type: 'currency' }],
+  subscription: [{ label: 'Monthly Amount', type: 'currency' }],
+  phone:        [{ label: 'Monthly Bill', type: 'currency' }, { label: 'Account Number', type: 'text' }],
+  loan:         [{ label: 'Remaining Balance', type: 'currency' }, { label: 'Monthly Payment', type: 'currency' }],
+  car_lease:    [{ label: 'Monthly Payment', type: 'currency' }, { label: 'Remaining Payments', type: 'number' }, { label: 'Lease End Date', type: 'text' }],
+  car_insurance:[{ label: 'Monthly Premium', type: 'currency' }, { label: 'Policy Number', type: 'text' }, { label: 'Coverage End Date', type: 'text' }],
   other:        [{ label: 'Amount', type: 'currency' }],
 };
 
@@ -99,7 +122,6 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile, bankAccoun
   };
 
   const removeField = (id) => setFields(prev => prev.filter(f => f.id !== id));
-  const updateFieldValue = (id, value) => setFields(prev => prev.map(f => f.id === id ? { ...f, value } : f));
 
   const handleSave = async () => {
     if (!name.trim()) return;
@@ -218,21 +240,6 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile, bankAccoun
                   <Text style={m.fieldName}>{field.label}</Text>
                   <Text style={m.fieldType}>{FIELD_TYPES.find(f => f.id === field.type)?.label || field.type}</Text>
                 </View>
-                {field.type === 'date' && (
-                  <TextInput
-                    style={m.dayInput}
-                    value={field.value || ''}
-                    onChangeText={v => {
-                      if (v === '') { updateFieldValue(field.id, ''); return; }
-                      const n = parseInt(v, 10);
-                      if (!isNaN(n) && n >= 1 && n <= 31) updateFieldValue(field.id, String(n));
-                    }}
-                    keyboardType="number-pad"
-                    placeholder="Day"
-                    maxLength={2}
-                    placeholderTextColor={C.faint}
-                  />
-                )}
                 <TouchableOpacity onPress={() => removeField(field.id)} style={m.fieldDel}>
                   <Text style={m.fieldDelTxt}>×</Text>
                 </TouchableOpacity>
@@ -366,21 +373,18 @@ export default function AccountsScreen() {
     setEditingAccount(null);
   };
 
-  const handleDelete = (account) => {
-    Alert.alert(
+  const handleDelete = async (account) => {
+    const ok = await confirmAsync(
       'Delete Account',
-      `Are you sure you want to delete "${account.name}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteAccount(account.id) },
-      ]
+      `Are you sure you want to delete "${account.name}"? This cannot be undone.`
     );
+    if (ok) deleteAccount(account.id);
   };
 
   const handleLinkBank = (account) => {
     openLink(account.id, async () => {
       await updateAccount(account.id, { plaidLinked: true });
-      Alert.alert('Bank Linked', `${account.name} is now connected. Tap "Sync Balances" to pull live data.`);
+      notify('Bank Linked', `${account.name} is now connected. Tap "Sync Balances" to pull live data.`);
     });
   };
 
@@ -388,9 +392,9 @@ export default function AccountsScreen() {
     setSyncing(true);
     try {
       const result = await syncBalances();
-      Alert.alert('Synced', `Updated balances for ${result.synced} account(s).`);
+      notify('Synced', `Updated balances for ${result.synced} account(s).`);
     } catch {
-      Alert.alert('Sync Failed', 'Could not reach the server. Make sure Cloud Functions are deployed.');
+      notify('Sync Failed', 'Could not reach the server. Make sure Cloud Functions are deployed.');
     } finally {
       setSyncing(false);
     }
@@ -420,7 +424,7 @@ export default function AccountsScreen() {
           <Text style={sc.emptyIcon}>🏦</Text>
           <Text style={sc.emptyTitle}>No accounts yet</Text>
           <Text style={sc.emptyMsg}>
-            Add your first account to start tracking balances, due dates, and more with DARS.
+            Add your first account to start tracking balances and amounts due with DARS.
           </Text>
           <TouchableOpacity style={sc.emptyBtn} onPress={() => setShowAdd(true)}>
             <Text style={sc.emptyBtnTxt}>Add Your First Account</Text>
@@ -557,7 +561,6 @@ const m = StyleSheet.create({
   fieldType: { fontSize: 12, color: C.faint, marginTop: 2 },
   fieldDel: { padding: 6 },
   fieldDelTxt: { fontSize: 20, color: C.faint },
-  dayInput: { width: 46, borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 5, fontSize: 13, textAlign: 'center', color: C.text, backgroundColor: '#FAFAFA', marginRight: 4 },
   addFieldRow: { gap: 8, marginTop: 8 },
   fieldTypeSelect: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   ftBtn: { borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },

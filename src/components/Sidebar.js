@@ -4,7 +4,7 @@ import { db } from '../config/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 const NAV = [
-  { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
+  { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
   { id: 'dars',      label: 'DARS',      icon: '📋' },
   { id: 'accounts',  label: 'Accounts',  icon: '🏦' },
   { id: 'car',       label: 'Car',        icon: '🚗' },

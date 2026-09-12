@@ -130,11 +130,90 @@ function BillChip({ ev, dateStr, insuf, onDefer }) {
   );
 }
 
+// ─── Draggable bill chip (Bills checklist → calendar) ─────────────────────────
+// Mirrors the money/expense/loan bag drag mechanism above, but one instance
+// per unscheduled bill so each can be dropped on its own chosen day.
+// A bill-list row that can be dragged onto a calendar day to assign it a due
+// date (used for account bills that haven't been scheduled yet). On mobile,
+// dragging isn't available, so it falls back to a tap-to-open-modal row.
+function DraggableBillRow({ cellsRef, onHoverChange, onDrop, onTapSchedule, isMobile, style, children }) {
+  const anim = useRef(new Animated.ValueXY()).current;
+  const [dragging, setDragging] = useState(false);
+  const hoverRef = useRef(null);
+
+  const responder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponderCapture: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => {
+      anim.setValue({ x: 0, y: 0 });
+      setDragging(true);
+    },
+    onPanResponderMove: (e, gs) => {
+      anim.x.setValue(gs.dx);
+      anim.y.setValue(gs.dy);
+      const x = e.nativeEvent.clientX ?? gs.moveX;
+      const y = e.nativeEvent.clientY ?? gs.moveY;
+      let found = null;
+      if (x != null && y != null && typeof document !== 'undefined') {
+        const el = document.getElementById('powerdars-cal-grid');
+        if (el) {
+          const r = el.getBoundingClientRect();
+          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            const col = Math.min(6, Math.floor((x - r.left) / (r.width / 7)));
+            const row = Math.min(5, Math.floor((y - r.top) / (r.height / 6)));
+            const cell = cellsRef.current[row * 7 + col];
+            if (cell?.cur && cell?.str) found = cell.str;
+          }
+        }
+      }
+      if (found !== hoverRef.current) {
+        hoverRef.current = found;
+        onHoverChange(found);
+      }
+    },
+    onPanResponderRelease: () => {
+      const dateStr = hoverRef.current;
+      if (dateStr) {
+        const n = new Date(); n.setHours(0, 0, 0, 0);
+        if (new Date(dateStr + 'T00:00:00') >= n) onDrop(dateStr);
+      }
+      hoverRef.current = null;
+      onHoverChange(null);
+      Animated.spring(anim, { toValue: { x: 0, y: 0 }, useNativeDriver: false, tension: 40, friction: 7 }).start();
+      setDragging(false);
+    },
+    onPanResponderTerminate: () => {
+      hoverRef.current = null;
+      onHoverChange(null);
+      Animated.spring(anim, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+      setDragging(false);
+    },
+  })).current;
+
+  if (isMobile) {
+    return (
+      <TouchableOpacity style={[style, mbt.billRowUnscheduled]} onPress={onTapSchedule} activeOpacity={0.7}>
+        {children}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <Animated.View
+      style={[style, mbt.billRowUnscheduled, dragging && mbt.billRowDragging, { transform: anim.getTranslateTransform() }]}
+      {...responder.panHandlers}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
 // ─── Calendar ────────────────────────────────────────────────────────────────
-function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems }) {
+function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, cellsRef, billDragOverStr, yr, mo, setYr, setMo }) {
   const today = new Date();
-  const [yr, setYr] = useState(today.getFullYear());
-  const [mo, setMo] = useState(today.getMonth());
   const [incomeModal, setIncomeModal] = useState(null);
   const [incomeInput, setIncomeInput] = useState('');
   const [incomeSource, setIncomeSource] = useState('');
@@ -144,7 +223,6 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
   const [isDragging, setIsDragging] = useState(false);
   const gridRef = useRef(null);
   const gridAbsPos = useRef(null);
-  const cellsRef = useRef([]);
   const projIncomeRef = useRef({});
   const hoverCellRef = useRef(null);
   const [dragOverStr, setDragOverStr] = useState(null);
@@ -376,33 +454,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
     return map;
   }, [bills]);
 
-  const accountEventsByDate = useMemo(() => {
-    const parseDayNum = (val) => {
-      if (!val) return NaN;
-      const s = String(val);
-      if (s.includes('-')) { const parts = s.split('-'); return parseInt(parts[parts.length - 1], 10); }
-      return parseInt(s, 10);
-    };
-    const map = {};
-    const daysInMo = new Date(yr, mo + 1, 0).getDate();
-    (accounts || []).forEach(acc => {
-      (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
-        const raw = field.value || getLatestValue(darsHistory || {}, acc.id, field.id);
-        const dayNum = parseDayNum(raw);
-        if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInMo) return;
-        const dateStr = `${yr}-${pad(mo + 1)}-${pad(dayNum)}`;
-        if (!map[dateStr]) map[dateStr] = [];
-        const paymentRe = /due|payment|bill|premium|amount/i;
-        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label))
-          || (acc.fields || []).find(f => f.type === 'currency');
-        const amount = amtField ? parseFloat(getLatestValue(darsHistory || {}, acc.id, amtField.id)) || 0 : 0;
-        map[dateStr].push({ id: acc.id + '_' + field.id, name: acc.name, category: 'bills', amount, icon: acc.icon });
-      });
-    });
-    return map;
-  }, [accounts, darsHistory, yr, mo]);
-
-  // ── Suppressed bill event keys (deferred items from DARS/accounts) ───────────
+  // ── Suppressed bill event keys (deferred bills) ───────────────────────────
   const suppressedBillKeys = useMemo(() => {
     const set = new Set();
     (deferredItems || []).forEach(item => {
@@ -428,38 +480,6 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
     const moEnd = new Date(yr, mo + 1, 0); moEnd.setHours(0, 0, 0, 0);
     if (moEnd < now) return {}; // past month — no projection
 
-    // Build account payment events for any given year/month
-    const parseDayNum = (val) => {
-      if (!val) return NaN;
-      const s = String(val);
-      if (s.includes('-')) { const parts = s.split('-'); return parseInt(parts[parts.length - 1], 10); }
-      return parseInt(s, 10);
-    };
-    const acctEventsCache = {};
-    const getAcctEventsForDate = (dateStr, y, m) => {
-      const key = `${y}-${m}`;
-      if (!acctEventsCache[key]) {
-        const map = {};
-        const daysInM = new Date(y, m + 1, 0).getDate();
-        (accounts || []).forEach(acc => {
-          (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
-            const raw = field.value || getLatestValue(darsHistory || {}, acc.id, field.id);
-            const dayNum = parseDayNum(raw);
-            if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInM) return;
-            const ds = `${y}-${pad(m + 1)}-${pad(dayNum)}`;
-            if (!map[ds]) map[ds] = [];
-            const paymentRe = /due|payment|bill|premium|amount/i;
-            const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label))
-              || (acc.fields || []).find(f => f.type === 'currency');
-            const amount = amtField ? parseFloat(getLatestValue(darsHistory || {}, acc.id, amtField.id)) || 0 : 0;
-            map[ds].push({ id: acc.id + '_' + field.id, name: acc.name, category: 'bills', amount, icon: acc.icon });
-          });
-        });
-        acctEventsCache[key] = map;
-      }
-      return acctEventsCache[key][dateStr] || [];
-    };
-
     // Walk day-by-day from today through end of viewed month so income/bills
     // from intermediate months are included in the running balance.
     let balance = startBalance;
@@ -483,10 +503,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
         : expEntry ? (parseFloat(expEntry.amount) || 0) : 0;
       balance -= expDayTotal;
 
-      const events = [
-        ...(billsByDate[dateStr] || []),
-        ...getAcctEventsForDate(dateStr, y, m),
-      ];
+      const events = billsByDate[dateStr] || [];
       const insufficient = new Set();
       for (const ev of events) {
         const amt = Math.abs(parseFloat(ev.amount) || 0);
@@ -763,10 +780,9 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
         <View key={wi} style={cal.week}>
           {cells.slice(wi * 7, wi * 7 + 7).map((cell, di) => {
             const isToday = cell.cur && cell.day === today.getDate() && mo === today.getMonth() && yr === today.getFullYear();
-            const events = cell.str ? [
-              ...(billsByDate[cell.str] || []).filter(ev => !suppressedBillKeys.has(`${ev.id}-${cell.str}`)),
-              ...(accountEventsByDate[cell.str] || []).filter(ev => !suppressedBillKeys.has(`${ev.id}-${cell.str}`)),
-            ] : [];
+            const events = cell.str
+              ? (billsByDate[cell.str] || []).filter(ev => !suppressedBillKeys.has(`${ev.id}-${cell.str}`))
+              : [];
             const proj = cell.str ? projection[cell.str] : null;
             const incRaw = cell.str ? projectedIncome[cell.str] : null;
             const incEntries = incRaw == null ? []
@@ -781,7 +797,7 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
             const isFuture = cell.cur && cellDate && cellDate >= now;
 
             return (
-              <View key={di} style={[cal.cell, isMobile && cal.cellMobile, isToday && cal.cellToday, cell.cur && cell.str && (cell.str === dragOverStr || cell.str === expenseDragOverStr || cell.str === loanDragOverStr) && cal.cellDrop]}>
+              <View key={di} style={[cal.cell, isMobile && cal.cellMobile, isToday && cal.cellToday, cell.cur && cell.str && (cell.str === dragOverStr || cell.str === expenseDragOverStr || cell.str === loanDragOverStr || cell.str === billDragOverStr) && cal.cellDrop]}>
                 {/* Day number row + projected end-of-day balance */}
                 <View style={cal.dayNum}>
                   <Text style={[cal.dayTxt, isMobile && cal.dayTxtMobile, !cell.cur && cal.dayMuted, isToday && cal.dayTxtToday]}>
@@ -879,8 +895,19 @@ function CalendarView({ bills, accounts, darsHistory, isMobile, projectedIncome,
 
 const BANK_TYPES = ['checking', 'savings', 'investment'];
 
+// Monthly dars docs (id "YYYY-MM") coexist with older daily docs (id
+// "YYYY-MM-DD") left over from before DARS switched to monthly-only review.
+// A plain string sort ranks "2026-07-30" above "2026-07", so a leftover
+// daily entry would always outrank that month's real (and more current)
+// monthly doc — pad the shorter key so a monthly doc always sorts after
+// any daily doc from that same month.
+function dateSortKey(dateStr) {
+  const d = dateStr || '';
+  return d.length === 7 ? d + '~' : d;
+}
+
 function getLatestValue(darsHistory, accountId, fieldId) {
-  const entries = Object.values(darsHistory).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const entries = Object.values(darsHistory).sort((a, b) => dateSortKey(b.date).localeCompare(dateSortKey(a.date)));
   for (const e of entries) {
     if (e.entries?.[accountId]?.[fieldId] !== undefined) return e.entries[accountId][fieldId];
   }
@@ -889,7 +916,7 @@ function getLatestValue(darsHistory, accountId, fieldId) {
 
 function getSparklineData(darsHistory, accountId, fieldId) {
   return Object.values(darsHistory)
-    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    .sort((a, b) => dateSortKey(a.date).localeCompare(dateSortKey(b.date)))
     .slice(-10)
     .map(e => e.entries?.[accountId]?.[fieldId])
     .filter(v => v !== undefined && v !== null && v !== '');
@@ -920,14 +947,18 @@ function LiveDot() {
   );
 }
 
-function AccountRow({ acc, darsHistory, color, isMobile, isLive, plaidBalance }) {
+function AccountRow({ acc, darsHistory, color, isMobile, onPress, isLive, plaidBalance }) {
   const pf = acc.fields?.find(f => f.type === 'currency') || acc.fields?.[0];
   const rawVal = (isLive && plaidBalance != null) ? plaidBalance : (pf ? getLatestValue(darsHistory, acc.id, pf.id) : null);
   const val = rawVal != null ? String(rawVal) : null;
   const spark = pf ? getSparklineData(darsHistory, acc.id, pf.id) : [];
   const isNeg = val !== null && parseFloat(val) < 0;
+  const Wrapper = onPress ? TouchableOpacity : View;
   return (
-    <View style={[pnl.row, isMobile && pnl.rowMobile]}>
+    <Wrapper
+      style={[pnl.row, isMobile && pnl.rowMobile]}
+      {...(onPress ? { onPress: () => onPress(acc), activeOpacity: 0.6 } : {})}
+    >
       <View style={[pnl.icon, { backgroundColor: color + '20' }]}>
         <IconView icon={acc.icon || ICONS[acc.type] || ICONS.checking} size={20} />
       </View>
@@ -943,12 +974,12 @@ function AccountRow({ acc, darsHistory, color, isMobile, isLive, plaidBalance })
         <Text style={pnl.balanceLabel}>{pf ? pf.label : 'Balance'}{isLive ? ' · Live' : ''}</Text>
       </View>
       {!isMobile && <Sparkline data={spark} color={color} width={90} height={36} />}
-    </View>
+    </Wrapper>
   );
 }
 
 // ─── BanksPanel ───────────────────────────────────────────────────────────────
-function BanksPanel({ accounts, darsHistory, isMobile, plaidLinkedIds, plaidBalances }) {
+function BanksPanel({ accounts, darsHistory, isMobile, onEditAccount, plaidLinkedIds, plaidBalances }) {
   const ACCT_COLORS = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4'];
   const bankAccounts = accounts.filter(a => BANK_TYPES.includes(a.type));
 
@@ -968,6 +999,10 @@ function BanksPanel({ accounts, darsHistory, isMobile, plaidLinkedIds, plaidBala
 
   return (
     <View style={pnl.card}>
+      <View style={pnl.header}>
+        <Text style={pnl.title}>Banks</Text>
+        <Text style={{ fontSize: 11, color: C.faint }}>Tap to update</Text>
+      </View>
       {bankAccounts.map((acc, idx) => (
         <AccountRow
           key={acc.id}
@@ -975,6 +1010,7 @@ function BanksPanel({ accounts, darsHistory, isMobile, plaidLinkedIds, plaidBala
           darsHistory={darsHistory}
           color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
           isMobile={isMobile}
+          onPress={onEditAccount}
           isLive={plaidLinkedIds?.has(acc.id)}
           plaidBalance={plaidBalances?.[acc.id]}
         />
@@ -984,6 +1020,67 @@ function BanksPanel({ accounts, darsHistory, isMobile, plaidLinkedIds, plaidBala
         <Text style={pnl.nwValue}>{fmtCurrency(netWorth)}</Text>
       </View>
     </View>
+  );
+}
+
+// ─── BankBalanceModal ───────────────────────────────────────────────────────
+function BankBalanceModal({ account, darsHistory, onClose, onSave }) {
+  const [values, setValues] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!account) return;
+    const init = {};
+    (account.fields || []).forEach(f => {
+      const v = getLatestValue(darsHistory, account.id, f.id);
+      init[f.id] = v !== null && v !== undefined ? String(v) : '';
+    });
+    setValues(init);
+  }, [account, darsHistory]);
+
+  if (!account) return null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(account.id, values);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={mds.overlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={onClose} />
+        <View style={[mds.box, { width: 340 }]}>
+          <Text style={mds.title}>{account.icon ? `${account.icon} ` : ''}{account.name}</Text>
+          {(account.fields || []).map(field => (
+            <View key={field.id}>
+              <Text style={mds.label}>{field.label}</Text>
+              <TextInput
+                style={mds.input}
+                value={values[field.id] ?? ''}
+                onChangeText={v => setValues(prev => ({ ...prev, [field.id]: v }))}
+                keyboardType={field.type === 'currency' || field.type === 'number' ? 'decimal-pad' : 'default'}
+                placeholder={field.type === 'currency' ? '0.00' : '—'}
+                placeholderTextColor={C.faint}
+                autoFocus
+              />
+            </View>
+          ))}
+          <View style={mds.btnRow}>
+            <TouchableOpacity style={mds.cancelBtn} onPress={onClose}>
+              <Text style={mds.cancelTxt}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[mds.saveBtn, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
+              <Text style={mds.saveTxt}>{saving ? 'Saving…' : 'Save'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1073,13 +1170,15 @@ function UpcomingBills({ bills }) {
 }
 
 // ─── MonthlyBillsTracker ──────────────────────────────────────────────────────
-function MonthlyBillsTracker({ bills, accounts, darsHistory, billPayments, onTogglePaid }) {
+function MonthlyBillsTracker({ bills, scheduledCreditBills = [], billPayments, onTogglePaid, unscheduledCreditBills = [], onScheduleCreditBill, cellsRef, onHoverChange, isMobile, yr, mo }) {
+  const [billScheduleModal, setBillScheduleModal] = useState(null);
+  const [billScheduleDate, setBillScheduleDate] = useState('');
   const today = new Date();
-  const todayDay = today.getDate();
-  const yr = today.getFullYear();
-  const mo = today.getMonth();
+  const isCurrentMonth = yr === today.getFullYear() && mo === today.getMonth();
+  const todayDay = isCurrentMonth ? today.getDate() : null;
   const yearMonth = `${yr}-${String(mo + 1).padStart(2, '0')}`;
   const monthName = MONTHS[mo];
+  const monthLabel = `${monthName} ${yr}`;
 
   // Bills from the bills collection
   const collectionBills = useMemo(() =>
@@ -1087,53 +1186,41 @@ function MonthlyBillsTracker({ bills, accounts, darsHistory, billPayments, onTog
     [bills, yearMonth]
   );
 
-  // Recurring bills derived from account due-day fields (same logic as calendar)
-  const accountEvents = useMemo(() => {
-    const parseDayNum = (val) => {
-      if (!val) return NaN;
-      const s = String(val);
-      if (s.includes('-')) { const parts = s.split('-'); return parseInt(parts[parts.length - 1], 10); }
-      return parseInt(s, 10);
-    };
-    const daysInMo = new Date(yr, mo + 1, 0).getDate();
-    const paymentRe = /due|payment|bill|premium|amount/i;
-    const events = [];
-    (accounts || []).forEach(acc => {
-      (acc.fields || []).filter(f => f.type === 'date').forEach(field => {
-        const raw = field.value || getLatestValue(darsHistory || {}, acc.id, field.id);
-        const dayNum = parseDayNum(raw);
-        if (isNaN(dayNum) || dayNum < 1 || dayNum > daysInMo) return;
-        const dueDate = `${yr}-${pad(mo + 1)}-${pad(dayNum)}`;
-        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label))
-          || (acc.fields || []).find(f => f.type === 'currency');
-        const amount = amtField ? parseFloat(getLatestValue(darsHistory || {}, acc.id, amtField.id)) || 0 : 0;
-        events.push({ id: `${acc.id}_${field.id}`, name: acc.name, category: 'bills', amount, icon: acc.icon, dueDate });
-      });
-    });
-    return events;
-  }, [accounts, darsHistory, yr, mo]);
-
+  // Unscheduled account bills sit in the list too (no dueDate yet), sorted
+  // ahead of dated bills so they're easy to find and drag onto a day.
   const monthBills = useMemo(() =>
-    [...collectionBills, ...accountEvents]
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [collectionBills, accountEvents]
+    [...collectionBills, ...scheduledCreditBills, ...unscheduledCreditBills]
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '')),
+    [collectionBills, scheduledCreditBills, unscheduledCreditBills]
   );
 
   const paidIds = useMemo(() => new Set((billPayments || {})[yearMonth] || []), [billPayments, yearMonth]);
 
-  // Index to insert TODAY line: first bill with day >= todayDay
+  // A bill with nothing owed this month is already "paid" — no amount to collect.
+  const isBillPaid = useCallback((b) => (b.amount || 0) === 0 || paidIds.has(b.id), [paidIds]);
+
+  // Index to insert TODAY line: first *dated* bill with day >= todayDay
+  // (undated/unscheduled bills sort first and are skipped here). Only
+  // meaningful when viewing the actual current month.
   const todayLineAt = useMemo(() => {
-    const idx = monthBills.findIndex(b => parseInt(b.dueDate.split('-')[2], 10) >= todayDay);
+    if (!isCurrentMonth) return -1;
+    const idx = monthBills.findIndex(b => b.dueDate && parseInt(b.dueDate.split('-')[2], 10) >= todayDay);
     return idx === -1 ? monthBills.length : idx;
-  }, [monthBills, todayDay]);
+  }, [monthBills, todayDay, isCurrentMonth]);
 
   const totalOwed = useMemo(() =>
     monthBills.filter(b => b.category !== 'income').reduce((s, b) => s + Math.abs(b.amount || 0), 0),
     [monthBills]
   );
   const paidOwed = useMemo(() =>
-    monthBills.filter(b => b.category !== 'income' && paidIds.has(b.id)).reduce((s, b) => s + Math.abs(b.amount || 0), 0),
-    [monthBills, paidIds]
+    monthBills.filter(b => b.category !== 'income' && isBillPaid(b)).reduce((s, b) => s + Math.abs(b.amount || 0), 0),
+    [monthBills, isBillPaid]
+  );
+  // Count against this month's actual bills, not stale ids left in billPayments
+  // from bills that no longer exist (e.g. after removing due-date auto-bills).
+  const paidCount = useMemo(() =>
+    monthBills.filter(isBillPaid).length,
+    [monthBills, isBillPaid]
   );
 
   const TodayDivider = () => (
@@ -1147,57 +1234,121 @@ function MonthlyBillsTracker({ bills, accounts, darsHistory, billPayments, onTog
   return (
     <View style={mbt.card}>
       <View style={mbt.header}>
-        <Text style={mbt.title}>{monthName} Bills</Text>
+        <Text style={mbt.title}>{monthLabel} Bills</Text>
         <View style={mbt.headerRight}>
-          <Text style={mbt.paidCount}>{paidIds.size}/{monthBills.length} paid</Text>
+          <Text style={mbt.paidCount}>{paidCount}/{monthBills.length} paid</Text>
           {totalOwed > 0 && (
             <Text style={mbt.paidAmt}>${paidOwed.toFixed(0)}/${totalOwed.toFixed(0)}</Text>
           )}
         </View>
       </View>
 
+      {/* Mobile: tap-to-schedule modal (no pointer drag on touch) */}
+      <Modal visible={billScheduleModal !== null} transparent animationType="fade" onRequestClose={() => setBillScheduleModal(null)}>
+        <View style={cal.incOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={() => setBillScheduleModal(null)} />
+          <View style={cal.incBox}>
+            <Text style={cal.incTitle}>Schedule Payment</Text>
+            <Text style={cal.incDate}>{billScheduleModal?.name} — ${parseFloat(billScheduleModal?.amount || 0).toFixed(2)}</Text>
+            <TextInput style={cal.incInput} value={billScheduleDate} onChangeText={setBillScheduleDate}
+              placeholder="Payment date (YYYY-MM-DD)" placeholderTextColor={C.faint} autoFocus />
+            <View style={cal.incBtns}>
+              <TouchableOpacity style={cal.incCancel} onPress={() => setBillScheduleModal(null)}>
+                <Text style={cal.incCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={cal.incSave}
+                onPress={() => {
+                  if (billScheduleDate.trim() && billScheduleModal) {
+                    onScheduleCreditBill(billScheduleModal.accountId, billScheduleDate.trim(), billScheduleModal.amount, billScheduleModal.name, billScheduleModal.icon);
+                  }
+                  setBillScheduleModal(null);
+                }}
+              >
+                <Text style={cal.incSaveTxt}>Schedule</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {monthBills.length === 0 ? (
         <>
-          <TodayDivider />
-          <Text style={mbt.empty}>No bills scheduled for {monthName}.</Text>
+          {isCurrentMonth && <TodayDivider />}
+          <Text style={mbt.empty}>No bills scheduled for {monthLabel}.</Text>
         </>
       ) : (
         <>
           {todayLineAt === 0 && <TodayDivider />}
           {monthBills.map((bill, idx) => {
-            const day = parseInt(bill.dueDate.split('-')[2], 10);
-            const isPast = day < todayDay;
-            const isToday = day === todayDay;
-            const isPaid = paidIds.has(bill.id);
+            const isUnscheduled = !bill.dueDate;
+            const day = isUnscheduled ? null : parseInt(bill.dueDate.split('-')[2], 10);
+            const isPast = isCurrentMonth && day !== null && day < todayDay;
+            const isToday = isCurrentMonth && day !== null && day === todayDay;
+            const isPaid = isBillPaid(bill);
             const isOverdue = isPast && !isPaid;
+            const canSchedule = isUnscheduled && !isPaid;
 
+            const rowStyle = [mbt.billRow, isOverdue && mbt.billRowOverdue, isPaid && mbt.billRowPaid];
+            const infoAmount = (
+              <>
+                <View style={mbt.billInfo}>
+                  <Text style={[mbt.billName, isPaid && mbt.billNameDone, isOverdue && mbt.billNameOverdue]}>
+                    {bill.icon ? `${bill.icon} ` : ''}{bill.name}
+                  </Text>
+                  <Text style={[mbt.billDue, isOverdue && { color: C.bills }, isToday && { color: C.reminder, fontWeight: '600' }]}>
+                    {isUnscheduled
+                      ? (canSchedule ? (isMobile ? 'Tap to schedule' : 'Drag onto a day to schedule') : 'No amount due')
+                      : (isToday ? 'Due today' : isPast ? `Was due ${monthName.slice(0,3)} ${day}` : `Due ${monthName.slice(0,3)} ${day}`)}
+                  </Text>
+                </View>
+                <Text style={[
+                  mbt.billAmt,
+                  bill.category === 'income' ? { color: C.income } : { color: C.text },
+                  isOverdue && { color: C.bills },
+                  isPaid && { color: C.faint },
+                ]}>
+                  {bill.category === 'income' ? '+' : '-'}${Math.abs(bill.amount || 0).toFixed(2)}
+                </Text>
+              </>
+            );
+
+            // The checkbox is its own tap target so a bill can be checked off
+            // directly, whether or not it's ever been dragged onto a day.
             return (
               <React.Fragment key={bill.id}>
-                <TouchableOpacity
-                  style={[mbt.billRow, isOverdue && mbt.billRowOverdue, isPaid && mbt.billRowPaid]}
-                  onPress={() => onTogglePaid(bill.id, yearMonth)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[mbt.checkbox, isPaid && mbt.checkboxDone, isOverdue && mbt.checkboxOverdue]}>
-                    {isPaid && <Text style={mbt.checkmark}>✓</Text>}
-                  </View>
-                  <View style={mbt.billInfo}>
-                    <Text style={[mbt.billName, isPaid && mbt.billNameDone, isOverdue && mbt.billNameOverdue]}>
-                      {bill.icon ? `${bill.icon} ` : ''}{bill.name}
-                    </Text>
-                    <Text style={[mbt.billDue, isOverdue && { color: C.bills }, isToday && { color: C.reminder, fontWeight: '600' }]}>
-                      {isToday ? 'Due today' : isPast ? `Was due ${monthName.slice(0,3)} ${day}` : `Due ${monthName.slice(0,3)} ${day}`}
-                    </Text>
-                  </View>
-                  <Text style={[
-                    mbt.billAmt,
-                    bill.category === 'income' ? { color: C.income } : { color: C.text },
-                    isOverdue && { color: C.bills },
-                    isPaid && { color: C.faint },
-                  ]}>
-                    {bill.category === 'income' ? '+' : '-'}${Math.abs(bill.amount || 0).toFixed(2)}
-                  </Text>
-                </TouchableOpacity>
+                <View style={rowStyle}>
+                  <TouchableOpacity
+                    onPress={() => onTogglePaid(bill.id, yearMonth)}
+                    activeOpacity={0.6}
+                    disabled={(bill.amount || 0) === 0}
+                  >
+                    <View style={[mbt.checkbox, isPaid && mbt.checkboxDone, isOverdue && mbt.checkboxOverdue]}>
+                      {isPaid && <Text style={mbt.checkmark}>✓</Text>}
+                    </View>
+                  </TouchableOpacity>
+                  {canSchedule ? (
+                    <DraggableBillRow
+                      style={mbt.billRowMain}
+                      cellsRef={cellsRef}
+                      onHoverChange={onHoverChange}
+                      onDrop={(dateStr) => onScheduleCreditBill(bill.accountId, dateStr, bill.amount, bill.name, bill.icon)}
+                      onTapSchedule={() => { setBillScheduleDate(''); setBillScheduleModal(bill); }}
+                      isMobile={isMobile}
+                    >
+                      {infoAmount}
+                    </DraggableBillRow>
+                  ) : (
+                    <TouchableOpacity
+                      style={mbt.billRowMain}
+                      onPress={() => onTogglePaid(bill.id, yearMonth)}
+                      activeOpacity={0.7}
+                      disabled={(bill.amount || 0) === 0}
+                    >
+                      {infoAmount}
+                    </TouchableOpacity>
+                  )}
+                </View>
                 {idx + 1 === todayLineAt && idx + 1 < monthBills.length && <TodayDivider />}
               </React.Fragment>
             );
@@ -1555,7 +1706,7 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments, plaidLinkedIds, plaidBalances } = useApp();
+  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments, creditSchedule, saveCreditSchedule, updateBankBalance, plaidLinkedIds, plaidBalances } = useApp();
 
   // Auto-sync Plaid balances on mount when there are linked accounts
   useEffect(() => {
@@ -1567,6 +1718,24 @@ export default function DashboardScreen() {
   const isNarrow = width < 1100;
   const [payDeferModal, setPayDeferModal] = useState(null);
   const [payDeferDate, setPayDeferDate] = useState('');
+  const [editingBankAccount, setEditingBankAccount] = useState(null);
+
+  // Which month the calendar (and everything keyed to "this month") is
+  // showing — shared with MonthlyBillsTracker so flipping months on the
+  // calendar flips the monthly bills list to match, for planning ahead.
+  const today = new Date();
+  const [viewYr, setViewYr] = useState(today.getFullYear());
+  const [viewMo, setViewMo] = useState(today.getMonth());
+
+  const handleSaveBankBalance = async (accountId, values) => {
+    await Promise.all(
+      Object.entries(values).map(([fieldId, val]) => updateBankBalance(accountId, fieldId, val))
+    );
+  };
+
+  // Shared with MonthlyBillsTracker so its bill chips can be dragged onto the calendar grid.
+  const cellsRef = useRef([]);
+  const [billDragOverStr, setBillDragOverStr] = useState(null);
 
   const handlePayDeferred = () => {
     if (!payDeferModal || !payDeferDate) return;
@@ -1588,6 +1757,60 @@ export default function DashboardScreen() {
       : [...current, billId];
     saveBillPayments({ ...(billPayments || {}), [yearMonth]: updated });
   }, [billPayments, saveBillPayments]);
+
+  // ── Account amounts due (from that month's DARS) → Bills checklist ──
+  // Accounts no longer carry a due date; each month's amount due sits
+  // here until it's dragged onto a calendar day to schedule the payment.
+  // Keyed to the *viewed* month (not necessarily today's), so flipping the
+  // calendar forward shows next month's planned bills once DARS has been
+  // filled out for it.
+  const viewedYearMonth = useMemo(() => `${viewYr}-${String(viewMo + 1).padStart(2, '0')}`, [viewYr, viewMo]);
+
+  const creditAmountsDue = useMemo(() => {
+    const paymentRe = /due|payment|bill|premium|amount/i;
+    return (accounts || [])
+      .map(acc => {
+        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label));
+        if (!amtField) return null;
+        const raw = darsHistory?.[viewedYearMonth]?.entries?.[acc.id]?.[amtField.id];
+        const parsed = parseFloat(raw);
+        const amount = raw === undefined || raw === '' || isNaN(parsed) ? 0 : parsed;
+        return { accountId: acc.id, name: acc.name, icon: acc.icon, amount };
+      })
+      .filter(Boolean);
+  }, [accounts, darsHistory, viewedYearMonth]);
+
+  const scheduledThisMonth = (creditSchedule || {})[viewedYearMonth] || {};
+
+  const unscheduledCreditBills = useMemo(() =>
+    creditAmountsDue
+      .filter(b => !scheduledThisMonth[b.accountId])
+      .map(b => ({ id: `credit_${b.accountId}_${viewedYearMonth}`, category: 'bills', ...b })),
+    [creditAmountsDue, scheduledThisMonth, viewedYearMonth]
+  );
+
+  const scheduledCreditBills = useMemo(() =>
+    creditAmountsDue
+      .filter(b => scheduledThisMonth[b.accountId])
+      .map(b => ({
+        id: `credit_${b.accountId}_${viewedYearMonth}`,
+        name: b.name, icon: b.icon, amount: b.amount, category: 'bills',
+        dueDate: scheduledThisMonth[b.accountId],
+      })),
+    [creditAmountsDue, scheduledThisMonth, viewedYearMonth]
+  );
+
+  const handleScheduleCreditBill = useCallback((accountId, dateStr, amount, name) => {
+    saveCreditSchedule({
+      ...(creditSchedule || {}),
+      [viewedYearMonth]: { ...(scheduledThisMonth || {}), [accountId]: dateStr },
+    });
+    const newExp = { ...(projectedExpenses || {}) };
+    const raw = newExp[dateStr];
+    const existing = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    newExp[dateStr] = [...existing, { amount, name }];
+    saveProjectedExpenses(newExp);
+  }, [creditSchedule, scheduledThisMonth, viewedYearMonth, projectedExpenses, saveProjectedExpenses, saveCreditSchedule]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -1613,9 +1836,9 @@ export default function DashboardScreen() {
       {isMobile ? (
         // ── Mobile: full mobile layout ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
-          <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
-          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
+          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} onEditAccount={setEditingBankAccount} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={true} footerLabel="Total Car" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
@@ -1628,10 +1851,10 @@ export default function DashboardScreen() {
       ) : isNarrow ? (
         // ── Narrow desktop: calendar full-width on top, panels stacked below ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
+          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
-          <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
-          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+          <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
+          <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} onEditAccount={setEditingBankAccount} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
           <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
@@ -1644,12 +1867,12 @@ export default function DashboardScreen() {
         // ── Wide desktop: two-column side-by-side ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} />
+            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
-            <MonthlyBillsTracker bills={bills} accounts={accounts} darsHistory={darsHistory} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} />
-            <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
+            <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
+            <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} onEditAccount={setEditingBankAccount} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
             <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
             <AccountSection title="Car" types={['car_lease','car_insurance']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Car" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
             <AccountSection title="Phone" types={['phone']} accounts={accounts} darsHistory={darsHistory} isMobile={false} footerLabel="Total Phone" footerColor={C.bills} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
@@ -1682,6 +1905,14 @@ export default function DashboardScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Bank balance quick-edit modal */}
+      <BankBalanceModal
+        account={editingBankAccount}
+        darsHistory={darsHistory}
+        onClose={() => setEditingBankAccount(null)}
+        onSave={handleSaveBankBalance}
+      />
 
     </ScrollView>
   );
@@ -1780,6 +2011,9 @@ const mbt = StyleSheet.create({
   billRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, borderRadius: 10, marginBottom: 1 },
   billRowOverdue: { backgroundColor: '#FEF2F2' },
   billRowPaid: { opacity: 0.55 },
+  billRowMain: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  billRowUnscheduled: { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, cursor: 'grab' },
+  billRowDragging: { opacity: 0.9, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 20, cursor: 'grabbing', zIndex: 9999 },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: C.border, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
   checkboxDone: { backgroundColor: C.income, borderColor: C.income },
   checkboxOverdue: { borderColor: C.bills },

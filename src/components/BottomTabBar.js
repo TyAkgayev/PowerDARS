@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 
 const NAV = [
-  { id: 'dashboard', label: 'Dash',     icon: '⊞' },
+  { id: 'dashboard', label: 'Dash',     icon: '🏠' },
   { id: 'dars',      label: 'DARS',     icon: '📋' },
   { id: 'accounts',  label: 'Accounts', icon: '🏦' },
   { id: 'car',       label: 'Car',      icon: '🚗' },
