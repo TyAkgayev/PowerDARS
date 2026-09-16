@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBAfQyphiBW_LOxaqHuqFKhXv5c8y5Lrd8",
@@ -11,6 +12,11 @@ const firebaseConfig = {
   measurementId: "G-TGJFGQNH7Y",
 };
 
+// Usernames are mapped to this fixed email domain so people can sign in
+// with a plain username instead of a real email address.
+export const USERNAME_EMAIL_DOMAIN = "powerdars.app";
+
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const auth = getAuth(app);
 export default app;

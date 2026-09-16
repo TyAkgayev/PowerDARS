@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { db } from '../config/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext';
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
@@ -37,24 +38,26 @@ function useDailyQuote() {
   return quote;
 }
 
-function useFavoriteQuotes(currentQuote) {
+function useFavoriteQuotes(currentQuote, uid) {
   const [favorites, setFavorites] = useState([]);
   const [starred, setStarred] = useState(false);
 
   useEffect(() => {
-    getDoc(doc(db, 'settings', 'favoriteQuotes'))
+    if (!uid) return;
+    getDoc(doc(db, 'users', uid, 'settings', 'favoriteQuotes'))
       .then(snap => {
         const favs = snap.exists() ? (snap.data().quotes || []) : [];
         setFavorites(favs);
       })
       .catch(() => {});
-  }, []);
+  }, [uid]);
 
   useEffect(() => {
     setStarred(favorites.some(f => f.text === currentQuote.text));
   }, [favorites, currentQuote]);
 
   const toggleStar = useCallback(async () => {
+    if (!uid) return;
     let updated;
     if (starred) {
       updated = favorites.filter(f => f.text !== currentQuote.text);
@@ -63,15 +66,16 @@ function useFavoriteQuotes(currentQuote) {
     }
     setFavorites(updated);
     setStarred(!starred);
-    await setDoc(doc(db, 'settings', 'favoriteQuotes'), { quotes: updated });
-  }, [starred, favorites, currentQuote]);
+    await setDoc(doc(db, 'users', uid, 'settings', 'favoriteQuotes'), { quotes: updated });
+  }, [uid, starred, favorites, currentQuote]);
 
   return { starred, toggleStar, favorites };
 }
 
 export default function Sidebar({ currentScreen, onNavigate }) {
+  const { uid, logout } = useAuth();
   const quote = useDailyQuote();
-  const { starred, toggleStar } = useFavoriteQuotes(quote);
+  const { starred, toggleStar } = useFavoriteQuotes(quote, uid);
 
   return (
     <View style={styles.sidebar}>
@@ -107,11 +111,16 @@ export default function Sidebar({ currentScreen, onNavigate }) {
       <View style={styles.bottomCard}>
         <View style={styles.bottomHeader}>
           <Text style={styles.bottomIcon}>✨</Text>
-          <TouchableOpacity onPress={toggleStar} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={[styles.star, starred && styles.starFilled]}>
-              {starred ? '★' : '☆'}
-            </Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <TouchableOpacity onPress={toggleStar} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={[styles.star, starred && styles.starFilled]}>
+                {starred ? '★' : '☆'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={logout} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.logoutIcon}>🚪</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         <Text style={styles.bottomSub}>"{quote.text}"</Text>
         {quote.author && <Text style={styles.bottomAuthor}>— {quote.author}</Text>}
@@ -168,4 +177,5 @@ const styles = StyleSheet.create({
   starFilled: { color: '#F59E0B' },
   bottomSub: { fontSize: 12, color: '#6B7280', lineHeight: 17, fontStyle: 'italic' },
   bottomAuthor: { fontSize: 11, color: '#9CA3AF', marginTop: 6, fontWeight: '600' },
+  logoutIcon: { fontSize: 18 },
 });

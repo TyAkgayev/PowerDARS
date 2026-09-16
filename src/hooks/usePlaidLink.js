@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { authedFetch } from '../utils/api';
 
 const FUNCTION_URLS = {
   createLinkToken:    'https://createlinktoken-v5nh5hrtnq-uc.a.run.app',
@@ -26,7 +27,7 @@ function getRedirectUri() {
 
 async function initPlaidLink({ accountId, onSuccess, receivedRedirectUri }) {
   const redirectUri = getRedirectUri();
-  const res = await fetch(FUNCTION_URLS.createLinkToken, {
+  const res = await authedFetch(FUNCTION_URLS.createLinkToken, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(redirectUri ? { redirect_uri: redirectUri } : {}),
@@ -49,7 +50,7 @@ async function initPlaidLink({ accountId, onSuccess, receivedRedirectUri }) {
       sessionStorage.removeItem(OAUTH_ACCOUNT_KEY);
       // Pass the specific Plaid account ID the user selected so sync can match exactly
       const plaidAccountId = metadata?.accounts?.[0]?.id ?? null;
-      const ex = await fetch(FUNCTION_URLS.exchangePublicToken, {
+      const ex = await authedFetch(FUNCTION_URLS.exchangePublicToken, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ public_token, accountId, plaidAccountId }),
@@ -98,7 +99,7 @@ export function usePlaidLink() {
   }, []);
 
   const syncBalances = useCallback(async () => {
-    const res = await fetch(FUNCTION_URLS.syncBalances, { method: 'POST' });
+    const res = await authedFetch(FUNCTION_URLS.syncBalances, { method: 'POST' });
     if (!res.ok) throw new Error('Sync failed');
     return res.json();
   }, []);

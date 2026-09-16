@@ -10,6 +10,26 @@ const twilio = require('twilio');
 admin.initializeApp();
 const db = admin.firestore();
 
+// Verifies the caller's Firebase ID token and returns their uid, or throws.
+// Every endpoint that touches per-user data requires this.
+async function requireUser(req) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) {
+    const err = new Error('Missing Authorization bearer token');
+    err.statusCode = 401;
+    throw err;
+  }
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    return decoded.uid;
+  } catch (e) {
+    const err = new Error('Invalid or expired auth token');
+    err.statusCode = 401;
+    throw err;
+  }
+}
+
 const PLAID_CLIENT_ID      = defineSecret('PLAID_CLIENT_ID');
 const PLAID_SECRET         = defineSecret('PLAID_SECRET');
 const TWILIO_ACCOUNT_SID   = defineSecret('TWILIO_ACCOUNT_SID');
@@ -38,10 +58,11 @@ exports.createLinkToken = onRequest(
   async (req, res) => {
     cors(req, res, async () => {
       try {
+        const uid = await requireUser(req);
         const plaid = getPlaidClient(PLAID_CLIENT_ID.value(), PLAID_SECRET.value());
         const { redirect_uri } = req.body || {};
         const response = await plaid.linkTokenCreate({
-          user: { client_user_id: 'powerdars-user' },
+          user: { client_user_id: uid },
           client_name: 'PowerSync',
           products: ['auth'],
           country_codes: ['US'],
@@ -50,6 +71,7 @@ exports.createLinkToken = onRequest(
         });
         res.json({ link_token: response.data.link_token });
       } catch (err) {
+        if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
         const plaidErr = err.response?.data;
         console.error('createLinkToken error:', plaidErr || err.message);
         res.status(500).json({
@@ -72,6 +94,7 @@ exports.exchangePublicToken = onRequest(
   async (req, res) => {
     cors(req, res, async () => {
       try {
+        const uid = await requireUser(req);
         const { public_token, accountId, plaidAccountId } = req.body;
         if (!public_token || !accountId) {
           return res.status(400).json({ error: 'public_token and accountId required' });
@@ -82,7 +105,7 @@ exports.exchangePublicToken = onRequest(
         const { access_token, item_id } = response.data;
 
         // Store access token + the specific Plaid account ID the user selected
-        await db.collection('plaidItems').doc(accountId).set({
+        await db.collection('users').doc(uid).collection('plaidItems').doc(accountId).set({
           access_token,
           item_id,
           accountId,
@@ -92,6 +115,7 @@ exports.exchangePublicToken = onRequest(
 
         res.json({ success: true, item_id });
       } catch (err) {
+        if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
         console.error('exchangePublicToken error:', err.response?.data || err.message);
         res.status(500).json({ error: 'Failed to exchange token' });
       }
@@ -108,9 +132,11 @@ exports.syncBalances = onRequest(
   async (req, res) => {
     cors(req, res, async () => {
       try {
+        const uid = await requireUser(req);
         const plaid = getPlaidClient(PLAID_CLIENT_ID.value(), PLAID_SECRET.value());
 
-        const itemsSnap = await db.collection('plaidItems').get();
+        const userRef = db.collection('users').doc(uid);
+        const itemsSnap = await userRef.collection('plaidItems').get();
         if (itemsSnap.empty) return res.json({ synced: 0 });
 
         const liveBalances = {};
@@ -132,13 +158,14 @@ exports.syncBalances = onRequest(
           console.log(`Synced ${accountId}: ${plaidAcc.name} (${plaidAcc.subtype}) = ${balance}`);
         }
 
-        await db.collection('settings').doc('plaidBalances').set({
+        await userRef.collection('settings').doc('plaidBalances').set({
           balances: liveBalances,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
         res.json({ synced: Object.keys(liveBalances).length });
       } catch (err) {
+        if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
         console.error('syncBalances error:', err.response?.data || err.message);
         res.status(500).json({ error: 'Failed to sync balances' });
       }
@@ -153,8 +180,9 @@ exports.getTransactions = onRequest(
   async (req, res) => {
     cors(req, res, async () => {
       try {
+        const uid = await requireUser(req);
         const plaid = getPlaidClient(PLAID_CLIENT_ID.value(), PLAID_SECRET.value());
-        const itemsSnap = await db.collection('plaidItems').get();
+        const itemsSnap = await db.collection('users').doc(uid).collection('plaidItems').get();
         if (itemsSnap.empty) return res.json({ transactions: [] });
 
         const endDate = new Date();
@@ -193,6 +221,7 @@ exports.getTransactions = onRequest(
         all.sort((a, b) => b.date.localeCompare(a.date));
         res.json({ transactions: all });
       } catch (err) {
+        if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
         console.error('getTransactions error:', err.message);
         res.status(500).json({ error: err.message });
       }
@@ -229,6 +258,7 @@ exports.sendWelcomeSms = onRequest(
   async (req, res) => {
     cors(req, res, async () => {
       try {
+        await requireUser(req);
         const { phone } = req.body || {};
         if (!phone) return res.status(400).json({ error: 'phone required' });
         const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
@@ -239,6 +269,7 @@ exports.sendWelcomeSms = onRequest(
         });
         res.json({ success: true });
       } catch (err) {
+        if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
         console.error('sendWelcomeSms error:', err.message);
         res.status(500).json({ error: err.message });
       }
@@ -265,6 +296,13 @@ exports.handleIncomingSMS = onRequest(
         return twiml('Text "next" to get your next upcoming shift.');
       }
 
+      // Reverse-lookup which account this phone number belongs to.
+      const ownerSnap = await db.collection('users').where('phoneNumber', '==', from).limit(1).get();
+      if (ownerSnap.empty) {
+        return twiml('This number is not linked to a PowerSync account.');
+      }
+      const workScheduleRef = ownerSnap.docs[0].ref.collection('workSchedule');
+
       const now = new Date();
       const pad = n => String(n).padStart(2, '0');
       const toDateStr = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -274,7 +312,7 @@ exports.handleIncomingSMS = onRequest(
         const d = new Date(now);
         d.setDate(d.getDate() + i);
         const ds = toDateStr(d);
-        const snap = await db.collection('workSchedule').doc(ds).get();
+        const snap = await workScheduleRef.doc(ds).get();
         if (!snap.exists) continue;
         const { shift, location } = snap.data();
         const startHour = SHIFT_START_HOURS[shift];
@@ -316,10 +354,8 @@ exports.sendShiftReminders = onSchedule(
   },
   async () => {
     try {
-      // Get user phone number from settings
-      const settingsSnap = await db.collection('settings').doc('app').get();
-      const phoneNumber = settingsSnap.exists ? settingsSnap.data().phoneNumber : null;
-      if (!phoneNumber) return;
+      const usersSnap = await db.collection('users').get();
+      if (usersSnap.empty) return;
 
       const now = new Date();
 
@@ -334,30 +370,35 @@ exports.sendShiftReminders = onSchedule(
         checkDates.push(`${y}-${mo}-${dy}`);
       }
 
-      for (const dateStr of checkDates) {
-        const snap = await db.collection('workSchedule').doc(dateStr).get();
-        if (!snap.exists) continue;
+      for (const userDoc of usersSnap.docs) {
+        const phoneNumber = userDoc.data().phoneNumber;
+        if (!phoneNumber) continue;
 
-        const { shift, location } = snap.data();
-        const startHour = SHIFT_START_HOURS[shift];
-        if (startHour === undefined) continue;
+        for (const dateStr of checkDates) {
+          const snap = await userDoc.ref.collection('workSchedule').doc(dateStr).get();
+          if (!snap.exists) continue;
 
-        // Build the shift start datetime in the server's local time
-        const [sy, sm, sd] = dateStr.split('-').map(Number);
-        const shiftStart = new Date(sy, sm - 1, sd, startHour, 0, 0, 0);
-        const diffMs = shiftStart - now;
-        const diffHours = diffMs / (1000 * 60 * 60);
+          const { shift, location } = snap.data();
+          const startHour = SHIFT_START_HOURS[shift];
+          if (startHour === undefined) continue;
 
-        // Send reminder if shift starts between 11.5 and 12.5 hours from now
-        if (diffHours >= 11.5 && diffHours <= 12.5) {
-          const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
-          const locationStr = location ? ` at ${location}` : '';
-          await client.messages.create({
-            body: `⏰ PowerSync Reminder: Your ${shift} shift starts in 12 hours${locationStr}. Stay ready!`,
-            from: TWILIO_FROM_NUMBER.value(),
-            to: phoneNumber,
-          });
-          console.log(`Sent shift reminder for ${dateStr} ${shift} to ${phoneNumber}`);
+          // Build the shift start datetime in the server's local time
+          const [sy, sm, sd] = dateStr.split('-').map(Number);
+          const shiftStart = new Date(sy, sm - 1, sd, startHour, 0, 0, 0);
+          const diffMs = shiftStart - now;
+          const diffHours = diffMs / (1000 * 60 * 60);
+
+          // Send reminder if shift starts between 11.5 and 12.5 hours from now
+          if (diffHours >= 11.5 && diffHours <= 12.5) {
+            const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+            const locationStr = location ? ` at ${location}` : '';
+            await client.messages.create({
+              body: `⏰ PowerSync Reminder: Your ${shift} shift starts in 12 hours${locationStr}. Stay ready!`,
+              from: TWILIO_FROM_NUMBER.value(),
+              to: phoneNumber,
+            });
+            console.log(`Sent shift reminder for ${userDoc.id} ${dateStr} ${shift} to ${phoneNumber}`);
+          }
         }
       }
     } catch (err) {

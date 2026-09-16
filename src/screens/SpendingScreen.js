@@ -8,6 +8,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
+import { authedFetch } from '../utils/api';
 
 const C = {
   primary: '#4361EE',
@@ -145,7 +146,7 @@ export default function SpendingScreen() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(GET_TRANSACTIONS_URL, { method: 'POST' });
+      const res = await authedFetch(GET_TRANSACTIONS_URL, { method: 'POST' });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);

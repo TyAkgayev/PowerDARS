@@ -4,6 +4,7 @@ import {
   StyleSheet, useWindowDimensions, Modal,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
+import { authedFetch } from '../utils/api';
 
 const C = {
   primary: '#4361EE',
@@ -120,7 +121,7 @@ function DayCell({ day, year, month, entry, activeShift, location, onPress, onDe
 
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 export default function WorkScreen() {
-  const { workSchedule, setWorkShift, deleteWorkShift, saveUserName, userName } = useApp();
+  const { workSchedule, setWorkShift, deleteWorkShift, saveUserName, userName, savePhoneNumber } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -151,12 +152,10 @@ export default function WorkScreen() {
 
   const handleSavePhone = useCallback(async (phone) => {
     setPhoneNumber(phone);
-    const { db } = require('../config/firebase');
-    const { doc, setDoc } = require('firebase/firestore');
-    await setDoc(doc(db, 'settings', 'app'), { phoneNumber: phone }, { merge: true });
+    await savePhoneNumber(phone);
     // Send welcome text explaining the "next" command
     try {
-      await fetch('https://sendwelcomesms-v5nh5hrtnq-uc.a.run.app', {
+      await authedFetch('https://sendwelcomesms-v5nh5hrtnq-uc.a.run.app', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
@@ -164,7 +163,7 @@ export default function WorkScreen() {
     } catch (e) {
       console.warn('Welcome SMS failed:', e.message);
     }
-  }, []);
+  }, [savePhoneNumber]);
 
   // Build calendar grid: array of {day or null}
   const cells = [];

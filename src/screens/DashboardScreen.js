@@ -7,6 +7,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { ICONS } from '../config/icons';
 import IconView from '../components/IconView';
+import { authedFetch } from '../utils/api';
 
 // ─── Colors ────────────────────────────────────────────────────────────────
 const C = {
@@ -1711,7 +1712,7 @@ export default function DashboardScreen() {
   // Auto-sync Plaid balances on mount when there are linked accounts
   useEffect(() => {
     if (!plaidLinkedIds || plaidLinkedIds.size === 0) return;
-    fetch('https://syncbalances-v5nh5hrtnq-uc.a.run.app', { method: 'POST' }).catch(() => {});
+    authedFetch('https://syncbalances-v5nh5hrtnq-uc.a.run.app', { method: 'POST' }).catch(() => {});
   }, [plaidLinkedIds?.size]);
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
