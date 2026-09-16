@@ -258,8 +258,6 @@ export default function DARSScreen() {
                       onChange={(fieldId, val) => handleChange(acc.id, fieldId, val)}
                       color={acc.color || ACCT_COLORS[idx % ACCT_COLORS.length]}
                       isMobile={isMobile}
-                      isPlaidLinked={plaidLinkedIds?.has(acc.id)}
-                      plaidBalance={plaidBalances?.[acc.id]}
                     />
                   );
                 })}
