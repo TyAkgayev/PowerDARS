@@ -8,13 +8,27 @@ import {
 
 const AppContext = createContext(null);
 
+const EMPTY_LICENSE_CHECK = { licenseStatus: null, registrationStatus: null, registrationExpiration: null, tickets: [], status: null, error: null, checkedAt: null };
+
 const currentMonthStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
+// Used until the user picks a display name in Settings (saveUserName) —
+// prefer their real name from Google/Apple sign-in, else their email/username.
+function deriveDefaultName(user) {
+  if (!user) return 'there';
+  if (user.displayName) return user.displayName.split(' ')[0];
+  if (user.email) {
+    const local = user.email.split('@')[0];
+    return local.charAt(0).toUpperCase() + local.slice(1);
+  }
+  return 'there';
+}
+
 export function AppProvider({ children }) {
-  const { uid } = useAuth();
+  const { uid, user } = useAuth();
   // Every collection/doc lives under users/{uid}/... so each account's data
   // is fully isolated from every other account.
   const uCol = useCallback((...segments) => collection(db, 'users', uid, ...segments), [uid]);
@@ -27,9 +41,11 @@ export function AppProvider({ children }) {
   const [projectedIncome, setProjectedIncome] = useState({});
   const [loading, setLoading] = useState(true);
   const [currentScreen, setCurrentScreen] = useState('dashboard');
-  const [userName, setUserNameState] = useState('Tymur');
+  const [userNameOverride, setUserNameOverride] = useState(null);
+  const userName = userNameOverride || deriveDefaultName(user);
   const [cars, setCars] = useState([]);
   const [driverProfile, setDriverProfile] = useState({ points: '', tickets: '', courts: '' });
+  const [licenseCheck, setLicenseCheck] = useState(EMPTY_LICENSE_CHECK);
   const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
   const [workSchedule, setWorkSchedule] = useState({});
   const [projectedExpenses, setProjectedExpenses] = useState({});
@@ -96,10 +112,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(uDoc('settings', 'app'), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.userName) setUserNameState(data.userName);
-      }
+      setUserNameOverride(snap.exists() ? (snap.data().userName || null) : null);
     });
     return unsub;
   }, [uid]);
@@ -119,6 +132,15 @@ export function AppProvider({ children }) {
     if (!uid) return;
     const unsub = onSnapshot(uDoc('settings', 'driverProfile'), (snap) => {
       if (snap.exists()) setDriverProfile(snap.data());
+    });
+    return unsub;
+  }, [uid]);
+
+  // License status check results listener
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = onSnapshot(uDoc('licenseStatus', 'latest'), (snap) => {
+      setLicenseCheck(snap.exists() ? snap.data() : EMPTY_LICENSE_CHECK);
     });
     return unsub;
   }, [uid]);
@@ -386,6 +408,7 @@ export function AppProvider({ children }) {
       saveDars, getCurrentMonthDars, updateBankBalance,
       cars, addCar, updateCar, deleteCar,
       driverProfile, saveDriverProfile,
+      licenseCheck,
       rnProfile, saveRNProfile,
       workSchedule, setWorkShift, deleteWorkShift,
     }}>

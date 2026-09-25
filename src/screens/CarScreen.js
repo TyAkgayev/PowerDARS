@@ -1,9 +1,14 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, TextInput, Modal,
-  TouchableOpacity, StyleSheet, useWindowDimensions, Image,
+  TouchableOpacity, StyleSheet, useWindowDimensions, Image, ActivityIndicator,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
+import { authedFetch } from '../utils/api';
+
+const CHECK_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkLicenseStatus';
+const POLL_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollLicenseStatus';
+const POLL_INTERVAL_MS = 4000;
 
 const CAR_IMAGES = {
   bmw:    require('../../assets/bmw.jpg'),
@@ -16,6 +21,14 @@ function resolveCarImage(name) {
   if (lower.includes('bmw'))    return CAR_IMAGES.bmw;
   if (lower.includes('nissan')) return CAR_IMAGES.nissan;
   return null;
+}
+
+function licenseStatusColor(status) {
+  if (!status) return '#4361EE';
+  const s = status.toLowerCase();
+  if (s.includes('valid') || s.includes('active')) return '#22C55E';
+  if (s.includes('suspend') || s.includes('revoke') || s.includes('expire')) return '#EF4444';
+  return '#F59E0B';
 }
 
 const C = {
@@ -280,9 +293,200 @@ const cn = StyleSheet.create({
   },
 });
 
+// ─── License Status Card ────────────────────────────────────────────────────
+function fmtCheckedAt(checkedAt) {
+  if (!checkedAt) return null;
+  const d = checkedAt.toDate ? checkedAt.toDate() : new Date(checkedAt);
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function LicenseStatusCard({ licenseCheck, isMobile }) {
+  const [checking, setChecking] = useState(false);
+  const [triggerError, setTriggerError] = useState(null);
+  const pollRef = useRef(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  // The agent can take a while (real login flow), so we don't block the
+  // button's request on it — start the run, then poll for the outcome.
+  const pollUntilDone = useCallback((runId) => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await authedFetch(`${POLL_LICENSE_STATUS_URL}?runId=${encodeURIComponent(runId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Check failed');
+        if (data.status === 'completed' || data.status === 'failed') {
+          stopPolling();
+          setChecking(false);
+          if (data.status === 'failed') setTriggerError(data.error || 'Check failed');
+        }
+      } catch (e) {
+        stopPolling();
+        setChecking(false);
+        setTriggerError(e.message);
+      }
+    }, POLL_INTERVAL_MS);
+  }, [stopPolling]);
+
+  const handleCheck = useCallback(async () => {
+    setChecking(true);
+    setTriggerError(null);
+    try {
+      const res = await authedFetch(CHECK_LICENSE_STATUS_URL, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start check');
+      pollUntilDone(data.runId);
+    } catch (e) {
+      setChecking(false);
+      setTriggerError(e.message);
+    }
+  }, [pollUntilDone]);
+
+  // Resume polling if a check was already in flight (e.g. page refresh).
+  useEffect(() => {
+    if (licenseCheck?.status === 'running' && licenseCheck?.runId && !pollRef.current) {
+      setChecking(true);
+      pollUntilDone(licenseCheck.runId);
+    }
+    return stopPolling;
+  }, [licenseCheck?.status, licenseCheck?.runId, pollUntilDone, stopPolling]);
+
+  const checkedAtLabel = fmtCheckedAt(licenseCheck?.checkedAt);
+  const licenseStat = licenseCheck?.licenseStatus;
+  const regStat = licenseCheck?.registrationStatus;
+  const regExp = licenseCheck?.registrationExpiration;
+  const rawTickets = licenseCheck?.tickets || [];
+  const tickets = useMemo(() => {
+    const hearingTime = (t) => {
+      const ms = t.hearingDate ? new Date(t.hearingDate).getTime() : NaN;
+      return isNaN(ms) ? Infinity : ms;
+    };
+    return [...rawTickets].sort((a, b) => hearingTime(a) - hearingTime(b));
+  }, [rawTickets]);
+  const hasAnyData = !!licenseStat || !!regStat || tickets.length > 0;
+
+  return (
+    <View style={[tt.card, isMobile && tt.cardMobile]}>
+      <View style={tt.header}>
+        <View>
+          <Text style={tt.title}>🪪 DMV Status</Text>
+          <Text style={tt.sub}>
+            {checking
+              ? 'Checking…'
+              : (checkedAtLabel ? `Last checked ${checkedAtLabel}` : 'Not checked yet')}
+            {!checking && ' · auto-checks every morning at 7am'}
+          </Text>
+        </View>
+        <TouchableOpacity style={tt.checkBtn} onPress={handleCheck} disabled={checking}>
+          {checking
+            ? <ActivityIndicator color="#fff" size="small" />
+            : <Text style={tt.checkBtnTxt}>Check Now</Text>}
+        </TouchableOpacity>
+      </View>
+
+      {(!!licenseStat || !!regStat) && (
+        <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
+          {!!licenseStat && <StatusPanel label="DRIVER'S LICENSE" value={licenseStat} />}
+          {!!regStat && (
+            <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Expires ${regExp}` : null} />
+          )}
+        </View>
+      )}
+
+      {(triggerError || licenseCheck?.status === 'failed') && (
+        <Text style={tt.error}>
+          {triggerError || licenseCheck?.error || 'Something went wrong checking DMV status.'}
+        </Text>
+      )}
+
+      {!hasAnyData && !checking && !triggerError && licenseCheck?.status !== 'failed' && (
+        <Text style={tt.empty}>Tap "Check Now" to verify license, registration, and open tickets.</Text>
+      )}
+
+      {tickets.length > 0 && (
+        <View style={tt.ticketsSection}>
+          <Text style={tt.ticketsHeading}>Open Tickets</Text>
+          <View style={tt.list}>
+            {tickets.map((t, i) => (
+              <View key={t.ticketNumber || i} style={tt.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={tt.rowTitle}>{t.violationCharge || t.raw || 'Ticket'}</Text>
+                  {!!t.ticketNumber && <Text style={tt.rowMeta}>#{t.ticketNumber}</Text>}
+                  {!!t.hearingDate && <Text style={tt.rowHearing}>Hearing: {t.hearingDate}</Text>}
+                </View>
+                {!!t.violationPoints && <Text style={tt.rowAmount}>{t.violationPoints} pts</Text>}
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function StatusPanel({ label, value, sub }) {
+  const color = licenseStatusColor(value);
+  return (
+    <View style={[tt.licensePanel, { backgroundColor: `${color}1A`, borderColor: color }]}>
+      <Text style={[tt.licensePanelLabel, { color }]}>{label}</Text>
+      <Text style={[tt.licensePanelStatus, { color }]}>{value}</Text>
+      {!!sub && <Text style={[tt.licensePanelSub, { color }]}>{sub}</Text>}
+    </View>
+  );
+}
+
+const tt = StyleSheet.create({
+  card: {
+    backgroundColor: C.card,
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  cardMobile: { padding: 16 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12, gap: 12 },
+  title: { fontSize: 16, fontWeight: '700', color: C.text },
+  sub: { fontSize: 12, color: C.muted, marginTop: 4 },
+  checkBtn: { backgroundColor: C.primary, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 10, minWidth: 96, alignItems: 'center' },
+  checkBtnTxt: { color: '#fff', fontWeight: '600', fontSize: 13 },
+  panelsRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
+  panelsRowMobile: { flexDirection: 'column' },
+  licensePanel: {
+    flex: 1,
+    borderWidth: 2,
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+  },
+  licensePanelLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  licensePanelStatus: { fontSize: 24, fontWeight: '800', marginTop: 2 },
+  licensePanelSub: { fontSize: 12, fontWeight: '600', marginTop: 4, opacity: 0.85 },
+  error: { fontSize: 13, color: C.red, marginBottom: 10 },
+  empty: { fontSize: 13, color: C.muted, paddingVertical: 8 },
+  ticketsSection: { marginTop: 4 },
+  ticketsHeading: { fontSize: 13, fontWeight: '700', color: C.text, marginBottom: 10 },
+  list: { gap: 10 },
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 12,
+  },
+  rowTitle: { fontSize: 14, fontWeight: '600', color: C.text },
+  rowMeta: { fontSize: 12, color: C.muted, marginTop: 2 },
+  rowHearing: { fontSize: 12, color: C.orange, fontWeight: '600', marginTop: 2 },
+  rowAmount: { fontSize: 13, fontWeight: '700', color: C.text },
+});
+
 // ─── Main Screen ────────────────────────────────────────────────────────────
 export default function CarScreen() {
-  const { cars, addCar, updateCar, deleteCar, driverProfile, saveDriverProfile } = useApp();
+  const { cars, addCar, updateCar, deleteCar, driverProfile, saveDriverProfile, licenseCheck } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -352,6 +556,9 @@ export default function CarScreen() {
           </View>
         </View>
       </TouchableOpacity>
+
+      {/* License Status */}
+      <LicenseStatusCard licenseCheck={licenseCheck} isMobile={isMobile} />
 
       {/* My Cars Header */}
       <View style={s.sectionHeader}>
