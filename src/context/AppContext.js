@@ -8,7 +8,10 @@ import {
 
 const AppContext = createContext(null);
 
-const EMPTY_LICENSE_CHECK = { licenseStatus: null, registrationStatus: null, registrationExpiration: null, tickets: [], status: null, error: null, checkedAt: null };
+const EMPTY_LICENSE_CHECK = {
+  licenseStatus: null, registrationStatus: null, registrationExpiration: null, licensePoints: null,
+  tickets: [], status: null, error: null, checkedAt: null,
+};
 
 const currentMonthStr = () => {
   const d = new Date();
@@ -44,7 +47,6 @@ export function AppProvider({ children }) {
   const [userNameOverride, setUserNameOverride] = useState(null);
   const userName = userNameOverride || deriveDefaultName(user);
   const [cars, setCars] = useState([]);
-  const [driverProfile, setDriverProfile] = useState({ points: '', tickets: '', courts: '' });
   const [licenseCheck, setLicenseCheck] = useState(EMPTY_LICENSE_CHECK);
   const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
   const [workSchedule, setWorkSchedule] = useState({});
@@ -123,15 +125,6 @@ export function AppProvider({ children }) {
     const q = query(uCol('cars'), orderBy('order', 'asc'));
     const unsub = onSnapshot(q, (snap) => {
       setCars(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    return unsub;
-  }, [uid]);
-
-  // Driver profile listener
-  useEffect(() => {
-    if (!uid) return;
-    const unsub = onSnapshot(uDoc('settings', 'driverProfile'), (snap) => {
-      if (snap.exists()) setDriverProfile(snap.data());
     });
     return unsub;
   }, [uid]);
@@ -312,10 +305,6 @@ export function AppProvider({ children }) {
     await deleteDoc(uDoc('cars', id));
   }, [uid]);
 
-  const saveDriverProfile = useCallback(async (data) => {
-    await setDoc(uDoc('settings', 'driverProfile'), data, { merge: true });
-  }, [uid]);
-
   const saveRNProfile = useCallback(async (data) => {
     await setDoc(uDoc('settings', 'rnProfile'), data, { merge: true });
   }, [uid]);
@@ -407,7 +396,6 @@ export function AppProvider({ children }) {
       addTask, toggleTask, deleteTask,
       saveDars, getCurrentMonthDars, updateBankBalance,
       cars, addCar, updateCar, deleteCar,
-      driverProfile, saveDriverProfile,
       licenseCheck,
       rnProfile, saveRNProfile,
       workSchedule, setWorkShift, deleteWorkShift,

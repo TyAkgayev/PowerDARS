@@ -14,6 +14,7 @@ import WorkScreen from './src/screens/WorkScreen';
 import SpendingScreen from './src/screens/SpendingScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import { usePlaidLink } from './src/hooks/usePlaidLink';
+import { listenForForegroundMessages } from './src/utils/pushNotifications';
 
 function MainApp() {
   const { currentScreen, setCurrentScreen, loading } = useApp();
@@ -21,6 +22,10 @@ function MainApp() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const { isOAuthReturn, completeOAuthReturn } = usePlaidLink();
+
+  useEffect(() => {
+    listenForForegroundMessages();
+  }, []);
 
   useEffect(() => {
     if (isOAuthReturn) {

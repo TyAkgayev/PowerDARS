@@ -5,9 +5,11 @@ import {
 } from 'react-native';
 import { useApp } from '../context/AppContext';
 import { authedFetch } from '../utils/api';
+import { enableCourtReminders } from '../utils/pushNotifications';
 
 const CHECK_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkLicenseStatus';
 const POLL_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollLicenseStatus';
+const SEND_TEST_NOTIFICATION_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/sendTestNotification';
 const POLL_INTERVAL_MS = 4000;
 
 const CAR_IMAGES = {
@@ -118,67 +120,6 @@ function CarModal({ visible, car, onSave, onDelete, onClose }) {
             </TouchableOpacity>
             <TouchableOpacity style={m.saveBtn} onPress={handleSave}>
               <Text style={m.saveTxt}>{isEdit ? 'Save' : 'Add'}</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </TouchableOpacity>
-    </Modal>
-  );
-}
-
-// ─── Driver Profile Edit Modal ──────────────────────────────────────────────
-function ProfileModal({ visible, profile, onSave, onClose }) {
-  const [form, setForm] = useState({
-    points: profile.points || '',
-    tickets: profile.tickets || '',
-    courts: profile.courts || '',
-  });
-
-  const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity style={m.overlay} onPress={onClose} activeOpacity={1}>
-        <TouchableOpacity activeOpacity={1} style={m.box}>
-          <Text style={m.title}>Driver Profile</Text>
-
-          <Text style={m.label}>Points on License</Text>
-          <TextInput
-            style={m.input}
-            value={form.points}
-            onChangeText={v => set('points', v)}
-            placeholder="0"
-            placeholderTextColor={C.faint}
-            keyboardType="number-pad"
-            autoFocus
-          />
-
-          <Text style={m.label}>Tickets</Text>
-          <TextInput
-            style={m.input}
-            value={form.tickets}
-            onChangeText={v => set('tickets', v)}
-            placeholder="0"
-            placeholderTextColor={C.faint}
-            keyboardType="number-pad"
-          />
-
-          <Text style={m.label}>Courts</Text>
-          <TextInput
-            style={m.input}
-            value={form.courts}
-            onChangeText={v => set('courts', v)}
-            placeholder="0"
-            placeholderTextColor={C.faint}
-            keyboardType="number-pad"
-          />
-
-          <View style={m.actions}>
-            <TouchableOpacity style={m.cancelBtn} onPress={onClose}>
-              <Text style={m.cancelTxt}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={m.saveBtn} onPress={() => { onSave(form); onClose(); }}>
-              <Text style={m.saveTxt}>Save</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -303,7 +244,35 @@ function fmtCheckedAt(checkedAt) {
 function LicenseStatusCard({ licenseCheck, isMobile }) {
   const [checking, setChecking] = useState(false);
   const [triggerError, setTriggerError] = useState(null);
+  const [notifyState, setNotifyState] = useState('idle'); // idle | loading | enabled | error
+  const [notifyError, setNotifyError] = useState(null);
+  const [testState, setTestState] = useState('idle'); // idle | loading | sent | error
   const pollRef = useRef(null);
+
+  const handleEnableReminders = useCallback(async () => {
+    setNotifyState('loading');
+    setNotifyError(null);
+    try {
+      await enableCourtReminders();
+      setNotifyState('enabled');
+    } catch (e) {
+      setNotifyState('error');
+      setNotifyError(e.message);
+    }
+  }, []);
+
+  const handleSendTest = useCallback(async () => {
+    setTestState('loading');
+    try {
+      const res = await authedFetch(SEND_TEST_NOTIFICATION_URL, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send test notification');
+      setTestState('sent');
+    } catch (e) {
+      setTestState('error');
+      setNotifyError(e.message);
+    }
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -387,14 +356,21 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
         </TouchableOpacity>
       </View>
 
-      {(!!licenseStat || !!regStat) && (
-        <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
-          {!!licenseStat && <StatusPanel label="DRIVER'S LICENSE" value={licenseStat} />}
-          {!!regStat && (
-            <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Expires ${regExp}` : null} />
-          )}
-        </View>
-      )}
+      <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
+        <IconTile icon="🪪" label="Driver License" />
+        <StatusPanel label="DRIVER'S LICENSE" value={licenseStat} />
+        <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Expires ${regExp}` : null} />
+        <StatusPanel label="INSURANCE" placeholder />
+      </View>
+
+      <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
+        <StatusPanel label="LEASE" placeholder />
+        <StatusPanel label="BRIDGES & TUNNELS" placeholder />
+      </View>
+
+      <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
+        <StatusPanel label="DOF PAYMENT PLAN" placeholder />
+      </View>
 
       {(triggerError || licenseCheck?.status === 'failed') && (
         <Text style={tt.error}>
@@ -406,12 +382,41 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
         <Text style={tt.empty}>Tap "Check Now" to verify license, registration, and open tickets.</Text>
       )}
 
-      {tickets.length > 0 && (
-        <View style={tt.ticketsSection}>
-          <Text style={tt.ticketsHeading}>Open Tickets</Text>
+      <View style={tt.ticketsSection}>
+        <View style={tt.ticketsHeadingRow}>
+          <Text style={tt.ticketsHeading}>Courts</Text>
+          <TouchableOpacity
+            style={tt.notifyBtn}
+            onPress={handleEnableReminders}
+            disabled={notifyState === 'loading' || notifyState === 'enabled'}
+          >
+            {notifyState === 'loading'
+              ? <ActivityIndicator color={C.primary} size="small" />
+              : <Text style={tt.notifyBtnTxt}>
+                  {notifyState === 'enabled' ? '🔔 Reminders on' : '🔔 Enable Court Reminders'}
+                </Text>}
+          </TouchableOpacity>
+          {notifyState === 'enabled' && (
+            <TouchableOpacity
+              style={tt.notifyBtn}
+              onPress={handleSendTest}
+              disabled={testState === 'loading'}
+            >
+              {testState === 'loading'
+                ? <ActivityIndicator color={C.primary} size="small" />
+                : <Text style={tt.notifyBtnTxt}>
+                    {testState === 'sent' ? '✅ Sent' : 'Send Test Notification'}
+                  </Text>}
+            </TouchableOpacity>
+          )}
+        </View>
+        {(notifyState === 'error' || testState === 'error') && <Text style={tt.error}>{notifyError}</Text>}
+        {tickets.length === 0 ? (
+          <Text style={tt.empty}>No open tickets found.</Text>
+        ) : (
           <View style={tt.list}>
             {tickets.map((t, i) => (
-              <View key={t.ticketNumber || i} style={tt.row}>
+              <View key={t.ticketNumber || i} style={tt.pillRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={tt.rowTitle}>{t.violationCharge || t.raw || 'Ticket'}</Text>
                   {!!t.ticketNumber && <Text style={tt.rowMeta}>#{t.ticketNumber}</Text>}
@@ -421,13 +426,30 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
               </View>
             ))}
           </View>
-        </View>
-      )}
+        )}
+      </View>
     </View>
   );
 }
 
-function StatusPanel({ label, value, sub }) {
+function IconTile({ icon, label }) {
+  return (
+    <View style={tt.iconTile}>
+      <Text style={tt.iconTileIcon}>{icon}</Text>
+      <Text style={tt.iconTileLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function StatusPanel({ label, value, sub, placeholder }) {
+  if (placeholder || !value) {
+    return (
+      <View style={[tt.licensePanel, tt.licensePanelPlaceholder]}>
+        <Text style={tt.licensePanelLabelMuted}>{label}</Text>
+        <Text style={tt.licensePanelPlaceholderTxt}>{placeholder ? 'Not tracked yet' : '—'}</Text>
+      </View>
+    );
+  }
   const color = licenseStatusColor(value);
   return (
     <View style={[tt.licensePanel, { backgroundColor: `${color}1A`, borderColor: color }]}>
@@ -469,14 +491,35 @@ const tt = StyleSheet.create({
   licensePanelLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1 },
   licensePanelStatus: { fontSize: 24, fontWeight: '800', marginTop: 2 },
   licensePanelSub: { fontSize: 12, fontWeight: '600', marginTop: 4, opacity: 0.85 },
+  licensePanelPlaceholder: { backgroundColor: C.bg, borderColor: C.border, borderStyle: 'dashed' },
+  licensePanelLabelMuted: { fontSize: 11, fontWeight: '700', letterSpacing: 1, color: C.faint },
+  licensePanelPlaceholderTxt: { fontSize: 15, fontWeight: '700', color: C.faint, marginTop: 2 },
+  iconTile: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.primaryLight,
+    gap: 4,
+  },
+  iconTileIcon: { fontSize: 24 },
+  iconTileLabel: { fontSize: 11, fontWeight: '700', color: C.primary, textAlign: 'center' },
   error: { fontSize: 13, color: C.red, marginBottom: 10 },
   empty: { fontSize: 13, color: C.muted, paddingVertical: 8 },
   ticketsSection: { marginTop: 4 },
-  ticketsHeading: { fontSize: 13, fontWeight: '700', color: C.text, marginBottom: 10 },
+  ticketsHeadingRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 10, gap: 10, flexWrap: 'wrap',
+  },
+  ticketsHeading: { fontSize: 15, fontWeight: '700', color: C.text },
+  notifyBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10, backgroundColor: C.primaryLight },
+  notifyBtnTxt: { fontSize: 12, fontWeight: '600', color: C.primary },
   list: { gap: 10 },
-  row: {
+  pillRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 12,
+    borderWidth: 1, borderColor: C.border, borderRadius: 28, paddingVertical: 14, paddingHorizontal: 20,
   },
   rowTitle: { fontSize: 14, fontWeight: '600', color: C.text },
   rowMeta: { fontSize: 12, color: C.muted, marginTop: 2 },
@@ -486,11 +529,10 @@ const tt = StyleSheet.create({
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
 export default function CarScreen() {
-  const { cars, addCar, updateCar, deleteCar, driverProfile, saveDriverProfile, licenseCheck } = useApp();
+  const { cars, addCar, updateCar, deleteCar, licenseCheck } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  const [showProfileModal, setShowProfileModal] = useState(false);
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [editCar, setEditCar] = useState(null);
 
@@ -507,9 +549,9 @@ export default function CarScreen() {
     setEditCar(null);
   }, [editCar, deleteCar]);
 
-  const pt = parseInt(driverProfile.points) || 0;
-  const tk = parseInt(driverProfile.tickets) || 0;
-  const ct = parseInt(driverProfile.courts) || 0;
+  const hasChecked = !!licenseCheck.checkedAt;
+  const points = licenseCheck.licensePoints;
+  const courtsCount = licenseCheck.tickets?.length || 0;
 
   return (
     <ScrollView
@@ -523,17 +565,10 @@ export default function CarScreen() {
           <Text style={[s.title, isMobile && s.titleMobile]}>🚗 Car</Text>
           <Text style={s.sub}>License & Vehicle Tracker</Text>
         </View>
-        <TouchableOpacity style={s.profileBtn} onPress={() => setShowProfileModal(true)}>
-          <Text style={s.profileBtnTxt}>Edit Profile</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Driver Profile Card */}
-      <TouchableOpacity
-        style={[s.profileCard, isMobile && s.profileCardMobile]}
-        onPress={() => setShowProfileModal(true)}
-        activeOpacity={0.85}
-      >
+      <View style={[s.profileCard, isMobile && s.profileCardMobile]}>
         {/* License Image Placeholder */}
         <View style={s.licenseBox}>
           <Text style={s.licenseIcon}>🪪</Text>
@@ -542,20 +577,20 @@ export default function CarScreen() {
 
         {/* Stats */}
         <View style={s.statsRow}>
-          <View style={[s.stat, { borderColor: pt > 0 ? C.orange : C.border }]}>
-            <Text style={[s.statNum, pt > 0 && { color: C.orange }]}>{pt}</Text>
+          <View style={[s.stat, { borderColor: points > 0 ? C.orange : C.border }]}>
+            <Text style={[s.statNum, points > 0 && { color: C.orange }]}>
+              {typeof points === 'number' ? points : '—'}
+            </Text>
             <Text style={s.statLabel}>Points</Text>
           </View>
-          <View style={[s.stat, { borderColor: tk > 0 ? C.red : C.border }]}>
-            <Text style={[s.statNum, tk > 0 && { color: C.red }]}>{tk}</Text>
-            <Text style={s.statLabel}>Tickets</Text>
-          </View>
-          <View style={[s.stat, { borderColor: ct > 0 ? C.red : C.border }]}>
-            <Text style={[s.statNum, ct > 0 && { color: C.red }]}>{ct}</Text>
+          <View style={[s.stat, { borderColor: courtsCount > 0 ? C.red : C.border }]}>
+            <Text style={[s.statNum, courtsCount > 0 && { color: C.red }]}>
+              {hasChecked ? courtsCount : '—'}
+            </Text>
             <Text style={s.statLabel}>Courts</Text>
           </View>
         </View>
-      </TouchableOpacity>
+      </View>
 
       {/* License Status */}
       <LicenseStatusCard licenseCheck={licenseCheck} isMobile={isMobile} />
@@ -612,13 +647,6 @@ export default function CarScreen() {
         />
       )}
 
-      {/* Driver Profile Modal */}
-      <ProfileModal
-        visible={showProfileModal}
-        profile={driverProfile}
-        onSave={saveDriverProfile}
-        onClose={() => setShowProfileModal(false)}
-      />
     </ScrollView>
   );
 }
@@ -634,14 +662,6 @@ const s = StyleSheet.create({
   title: { fontSize: 26, fontWeight: '700', color: C.text },
   titleMobile: { fontSize: 20 },
   sub: { fontSize: 14, color: C.muted, marginTop: 4 },
-
-  profileBtn: {
-    backgroundColor: C.primaryLight,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  profileBtnTxt: { fontSize: 13, fontWeight: '600', color: C.primary },
 
   profileCard: {
     backgroundColor: C.card,
