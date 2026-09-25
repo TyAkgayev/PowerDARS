@@ -252,6 +252,30 @@ function fmtHearingDate(dateStr) {
   return `${mm}-${dd}-${yyyy.slice(2)}`;
 }
 
+// Whole calendar days from today to the soonest open ticket's hearing date
+// (local midnight on both sides, so there's no UTC-shift off-by-one), or
+// null if no ticket has a usable hearing date. Prefers upcoming dates, but
+// falls back to the closest one even if every hearing is somehow in the past
+// rather than showing nothing.
+function daysUntilNextHearing(tickets) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const times = (tickets || [])
+    .map((t) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t.hearingDate || '');
+      if (!m) return null;
+      const [, yyyy, mm, dd] = m;
+      return new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime();
+    })
+    .filter((ms) => ms !== null);
+  if (times.length === 0) return null;
+
+  const upcoming = times.filter((ms) => ms >= today.getTime());
+  const soonest = Math.min(...(upcoming.length > 0 ? upcoming : times));
+  return Math.round((soonest - today.getTime()) / 86400000);
+}
+
 function DMVStatusCard({ licenseCheck, isMobile }) {
   const [checking, setChecking] = useState(false);
   const [triggerError, setTriggerError] = useState(null);
@@ -313,6 +337,7 @@ function DMVStatusCard({ licenseCheck, isMobile }) {
   const points = licenseCheck?.licensePoints;
   const hasChecked = !!licenseCheck?.checkedAt;
   const ticketsCount = licenseCheck?.tickets?.length || 0;
+  const nextHearingDays = daysUntilNextHearing(licenseCheck?.tickets);
   const hasAnyData = !!licenseStat || !!regStat || ticketsCount > 0;
 
   return (
@@ -338,7 +363,12 @@ function DMVStatusCard({ licenseCheck, isMobile }) {
         <StatusPanel label="LICENSE" value={licenseStat} />
         <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Exp ${fmtHearingDate(regExp)}` : null} />
         <StatusPanel label="POINTS" value={typeof points === 'number' ? String(points) : null} />
-        <StatusPanel label="COURTS" value={hasChecked ? String(ticketsCount) : null} alert={ticketsCount > 0} />
+        <StatusPanel
+          label="COURTS"
+          value={hasChecked ? (nextHearingDays === null ? 'None' : (nextHearingDays === 0 ? 'Today' : `${nextHearingDays}d`)) : null}
+          sub={nextHearingDays !== null ? 'next hearing' : null}
+          alert={nextHearingDays !== null}
+        />
         <StatusPanel label="INSURANCE" placeholder />
         <StatusPanel label="LEASE" placeholder />
         <StatusPanel label="BRIDGES & TUNNELS" placeholder />
