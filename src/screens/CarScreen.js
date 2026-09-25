@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useApp } from '../context/AppContext';
 import { authedFetch } from '../utils/api';
-import { enableCourtReminders } from '../utils/pushNotifications';
+import { enableCourtReminders, checkCourtRemindersEnabled } from '../utils/pushNotifications';
 
 const CHECK_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkLicenseStatus';
 const POLL_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollLicenseStatus';
@@ -252,47 +252,10 @@ function fmtHearingDate(dateStr) {
   return `${mm}-${dd}-${yyyy.slice(2)}`;
 }
 
-function LicenseStatusCard({ licenseCheck, isMobile }) {
+function DMVStatusCard({ licenseCheck, isMobile }) {
   const [checking, setChecking] = useState(false);
   const [triggerError, setTriggerError] = useState(null);
-  const [notifyState, setNotifyState] = useState('idle'); // idle | loading | enabled | error
-  const [notifyError, setNotifyError] = useState(null);
-  const [testState, setTestState] = useState('idle'); // idle | loading | sent | error
   const pollRef = useRef(null);
-
-  const handleEnableReminders = useCallback(async () => {
-    setNotifyState('loading');
-    setNotifyError(null);
-    try {
-      await enableCourtReminders();
-      setNotifyState('enabled');
-    } catch (e) {
-      setNotifyState('error');
-      setNotifyError(e.message);
-    }
-  }, []);
-
-  const [testSecondsLeft, setTestSecondsLeft] = useState(0);
-
-  const handleSendTest = useCallback(async () => {
-    setTestState('loading');
-    setTestSecondsLeft(TEST_NOTIFICATION_DELAY_SECONDS);
-    const countdown = setInterval(() => {
-      setTestSecondsLeft((s) => (s > 0 ? s - 1 : 0));
-    }, 1000);
-    try {
-      const res = await authedFetch(SEND_TEST_NOTIFICATION_URL, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to send test notification');
-      setTestState('sent');
-    } catch (e) {
-      setTestState('error');
-      setNotifyError(e.message);
-    } finally {
-      clearInterval(countdown);
-      setTestSecondsLeft(0);
-    }
-  }, []);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -347,20 +310,15 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
   const licenseStat = licenseCheck?.licenseStatus;
   const regStat = licenseCheck?.registrationStatus;
   const regExp = licenseCheck?.registrationExpiration;
-  const rawTickets = licenseCheck?.tickets || [];
-  const tickets = useMemo(() => {
-    const hearingTime = (t) => {
-      const ms = t.hearingDate ? new Date(t.hearingDate).getTime() : NaN;
-      return isNaN(ms) ? Infinity : ms;
-    };
-    return [...rawTickets].sort((a, b) => hearingTime(a) - hearingTime(b));
-  }, [rawTickets]);
-  const hasAnyData = !!licenseStat || !!regStat || tickets.length > 0;
+  const points = licenseCheck?.licensePoints;
+  const hasChecked = !!licenseCheck?.checkedAt;
+  const ticketsCount = licenseCheck?.tickets?.length || 0;
+  const hasAnyData = !!licenseStat || !!regStat || ticketsCount > 0;
 
   return (
     <View style={[tt.card, isMobile && tt.cardMobile]}>
       <View style={tt.header}>
-        <View>
+        <View style={tt.headerText}>
           <Text style={tt.title}>🪪 DMV Status</Text>
           <Text style={tt.sub}>
             {checking
@@ -376,19 +334,14 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
         </TouchableOpacity>
       </View>
 
-      <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
-        <IconTile icon="🪪" label="Driver License" />
-        <StatusPanel label="DRIVER'S LICENSE" value={licenseStat} />
-        <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Expires ${regExp}` : null} />
+      <View style={tt.tilesGrid}>
+        <StatusPanel label="LICENSE" value={licenseStat} />
+        <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Exp ${fmtHearingDate(regExp)}` : null} />
+        <StatusPanel label="POINTS" value={typeof points === 'number' ? String(points) : null} />
+        <StatusPanel label="COURTS" value={hasChecked ? String(ticketsCount) : null} alert={ticketsCount > 0} />
         <StatusPanel label="INSURANCE" placeholder />
-      </View>
-
-      <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
         <StatusPanel label="LEASE" placeholder />
         <StatusPanel label="BRIDGES & TUNNELS" placeholder />
-      </View>
-
-      <View style={[tt.panelsRow, isMobile && tt.panelsRowMobile]}>
         <StatusPanel label="DOF PAYMENT PLAN" placeholder />
       </View>
 
@@ -401,81 +354,137 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
       {!hasAnyData && !checking && !triggerError && licenseCheck?.status !== 'failed' && (
         <Text style={tt.empty}>Tap "Check Now" to verify license, registration, and open tickets.</Text>
       )}
+    </View>
+  );
+}
 
-      <View style={tt.ticketsSection}>
-        <View style={tt.ticketsHeadingRow}>
-          <Text style={tt.ticketsHeading}>Courts</Text>
+// ─── Courts Card ─────────────────────────────────────────────────────────────
+function CourtsCard({ licenseCheck, isMobile }) {
+  const [notifyState, setNotifyState] = useState('idle'); // idle | loading | enabled | error
+  const [notifyError, setNotifyError] = useState(null);
+  const [testState, setTestState] = useState('idle'); // idle | loading | sent | error
+  const [testSecondsLeft, setTestSecondsLeft] = useState(0);
+
+  // Notification permission (and the saved token) persist across reloads even
+  // though this component's state doesn't — check on mount so the button
+  // reflects reality instead of always resetting to "Enable Court Reminders".
+  useEffect(() => {
+    let cancelled = false;
+    checkCourtRemindersEnabled().then((enabled) => {
+      if (!cancelled && enabled) setNotifyState('enabled');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleEnableReminders = useCallback(async () => {
+    setNotifyState('loading');
+    setNotifyError(null);
+    try {
+      await enableCourtReminders();
+      setNotifyState('enabled');
+    } catch (e) {
+      setNotifyState('error');
+      setNotifyError(e.message);
+    }
+  }, []);
+
+  const handleSendTest = useCallback(async () => {
+    setTestState('loading');
+    setTestSecondsLeft(TEST_NOTIFICATION_DELAY_SECONDS);
+    const countdown = setInterval(() => {
+      setTestSecondsLeft((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    try {
+      const res = await authedFetch(SEND_TEST_NOTIFICATION_URL, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send test notification');
+      setTestState('sent');
+    } catch (e) {
+      setTestState('error');
+      setNotifyError(e.message);
+    } finally {
+      clearInterval(countdown);
+      setTestSecondsLeft(0);
+    }
+  }, []);
+
+  const rawTickets = licenseCheck?.tickets || [];
+  const tickets = useMemo(() => {
+    const hearingTime = (t) => {
+      const ms = t.hearingDate ? new Date(t.hearingDate).getTime() : NaN;
+      return isNaN(ms) ? Infinity : ms;
+    };
+    return [...rawTickets].sort((a, b) => hearingTime(a) - hearingTime(b));
+  }, [rawTickets]);
+
+  return (
+    <View style={[tt.card, isMobile && tt.cardMobile]}>
+      <View style={tt.ticketsHeadingRow}>
+        <Text style={tt.ticketsHeading}>Courts</Text>
+        <TouchableOpacity
+          style={tt.notifyBtn}
+          onPress={handleEnableReminders}
+          disabled={notifyState === 'loading' || notifyState === 'enabled'}
+        >
+          {notifyState === 'loading'
+            ? <ActivityIndicator color={C.primary} size="small" />
+            : <Text style={tt.notifyBtnTxt}>
+                {notifyState === 'enabled' ? '🔔 Reminders on' : '🔔 Enable Court Reminders'}
+              </Text>}
+        </TouchableOpacity>
+        {notifyState === 'enabled' && (
           <TouchableOpacity
             style={tt.notifyBtn}
-            onPress={handleEnableReminders}
-            disabled={notifyState === 'loading' || notifyState === 'enabled'}
+            onPress={handleSendTest}
+            disabled={testState === 'loading'}
           >
-            {notifyState === 'loading'
-              ? <ActivityIndicator color={C.primary} size="small" />
-              : <Text style={tt.notifyBtnTxt}>
-                  {notifyState === 'enabled' ? '🔔 Reminders on' : '🔔 Enable Court Reminders'}
-                </Text>}
+            <Text style={tt.notifyBtnTxt}>
+              {testState === 'loading'
+                ? `Sending in ${testSecondsLeft}s… close the app now`
+                : (testState === 'sent' ? '✅ Sent' : 'Send Test Notification')}
+            </Text>
           </TouchableOpacity>
-          {notifyState === 'enabled' && (
-            <TouchableOpacity
-              style={tt.notifyBtn}
-              onPress={handleSendTest}
-              disabled={testState === 'loading'}
-            >
-              <Text style={tt.notifyBtnTxt}>
-                {testState === 'loading'
-                  ? `Sending in ${testSecondsLeft}s… close the app now`
-                  : (testState === 'sent' ? '✅ Sent' : 'Send Test Notification')}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        {(notifyState === 'error' || testState === 'error') && <Text style={tt.error}>{notifyError}</Text>}
-        {tickets.length === 0 ? (
-          <Text style={tt.empty}>No open tickets found.</Text>
-        ) : (
-          <View style={tt.list}>
-            {tickets.map((t, i) => (
-              <View key={t.ticketNumber || i} style={tt.pillRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={tt.rowTitle}>{t.ticketNumber ? `#${t.ticketNumber}` : (t.raw || 'Ticket')}</Text>
-                  {!!t.violationCharge && <Text style={tt.rowMeta}>{t.violationCharge}</Text>}
-                  {!!t.hearingDate && <Text style={tt.rowHearing}>Hearing: {fmtHearingDate(t.hearingDate)}</Text>}
-                </View>
-                {!!t.violationPoints && <Text style={tt.rowAmount}>{t.violationPoints} pts</Text>}
-              </View>
-            ))}
-          </View>
         )}
       </View>
+      {(notifyState === 'error' || testState === 'error') && <Text style={tt.error}>{notifyError}</Text>}
+      {tickets.length === 0 ? (
+        <Text style={tt.empty}>No open tickets found.</Text>
+      ) : (
+        <View style={tt.list}>
+          {tickets.map((t, i) => (
+            <View key={t.ticketNumber || i} style={tt.pillRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={tt.rowTitle}>{t.ticketNumber ? `#${t.ticketNumber}` : (t.raw || 'Ticket')}</Text>
+                {!!t.violationCharge && <Text style={tt.rowMeta}>{t.violationCharge}</Text>}
+                {!!t.hearingDate && <Text style={tt.rowHearing}>Hearing: {fmtHearingDate(t.hearingDate)}</Text>}
+              </View>
+              {!!t.violationPoints && <Text style={tt.rowAmount}>{t.violationPoints} pts</Text>}
+            </View>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
 
-function IconTile({ icon, label }) {
-  return (
-    <View style={tt.iconTile}>
-      <Text style={tt.iconTileIcon}>{icon}</Text>
-      <Text style={tt.iconTileLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function StatusPanel({ label, value, sub, placeholder }) {
-  if (placeholder || !value) {
+// Small square status tile used in the DMV Status grid. `alert` overrides the
+// text-based color heuristic for numeric fields (Points, Courts) where
+// "Valid"/"Suspended" keyword matching doesn't apply — true=red, false=green.
+function StatusPanel({ label, value, sub, placeholder, alert }) {
+  if (placeholder || value == null) {
     return (
-      <View style={[tt.licensePanel, tt.licensePanelPlaceholder]}>
-        <Text style={tt.licensePanelLabelMuted}>{label}</Text>
-        <Text style={tt.licensePanelPlaceholderTxt}>{placeholder ? 'Not tracked yet' : '—'}</Text>
+      <View style={[tt.tile, tt.tilePlaceholder]}>
+        <Text style={tt.tileLabelMuted}>{label}</Text>
+        <Text style={tt.tileValueMuted}>{placeholder ? 'N/A' : '—'}</Text>
       </View>
     );
   }
-  const color = licenseStatusColor(value);
+  const color = alert !== undefined ? (alert ? '#EF4444' : '#22C55E') : licenseStatusColor(value);
   return (
-    <View style={[tt.licensePanel, { backgroundColor: `${color}1A`, borderColor: color }]}>
-      <Text style={[tt.licensePanelLabel, { color }]}>{label}</Text>
-      <Text style={[tt.licensePanelStatus, { color }]}>{value}</Text>
-      {!!sub && <Text style={[tt.licensePanelSub, { color }]}>{sub}</Text>}
+    <View style={[tt.tile, { backgroundColor: `${color}1A`, borderColor: color }]}>
+      <Text style={[tt.tileLabel, { color }]}>{label}</Text>
+      <Text style={[tt.tileValue, { color }]}>{value}</Text>
+      {!!sub && <Text style={[tt.tileSub, { color }]}>{sub}</Text>}
     </View>
   );
 }
@@ -493,42 +502,32 @@ const tt = StyleSheet.create({
     elevation: 2,
   },
   cardMobile: { padding: 16 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12, gap: 12 },
+  header: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    marginBottom: 16, gap: 12, flexWrap: 'wrap',
+  },
+  headerText: { flex: 1, minWidth: 120 },
   title: { fontSize: 16, fontWeight: '700', color: C.text },
   sub: { fontSize: 12, color: C.muted, marginTop: 4 },
-  checkBtn: { backgroundColor: C.primary, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 10, minWidth: 96, alignItems: 'center' },
+  checkBtn: {
+    backgroundColor: C.primary, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 10,
+    minWidth: 96, alignItems: 'center', flexShrink: 0,
+  },
   checkBtnTxt: { color: '#fff', fontWeight: '600', fontSize: 13 },
-  panelsRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  panelsRowMobile: { flexDirection: 'column' },
-  licensePanel: {
-    flex: 1,
-    borderWidth: 2,
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    alignItems: 'center',
+  tilesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
+  tile: {
+    width: 100, minHeight: 76,
+    borderWidth: 2, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center', padding: 8,
   },
-  licensePanelLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  licensePanelStatus: { fontSize: 24, fontWeight: '800', marginTop: 2 },
-  licensePanelSub: { fontSize: 12, fontWeight: '600', marginTop: 4, opacity: 0.85 },
-  licensePanelPlaceholder: { backgroundColor: C.bg, borderColor: C.border, borderStyle: 'dashed' },
-  licensePanelLabelMuted: { fontSize: 11, fontWeight: '700', letterSpacing: 1, color: C.faint },
-  licensePanelPlaceholderTxt: { fontSize: 15, fontWeight: '700', color: C.faint, marginTop: 2 },
-  iconTile: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: C.primaryLight,
-    gap: 4,
-  },
-  iconTileIcon: { fontSize: 24 },
-  iconTileLabel: { fontSize: 11, fontWeight: '700', color: C.primary, textAlign: 'center' },
+  tileLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5, textAlign: 'center' },
+  tileValue: { fontSize: 15, fontWeight: '800', marginTop: 3, textAlign: 'center' },
+  tileSub: { fontSize: 9, fontWeight: '600', marginTop: 2, textAlign: 'center', opacity: 0.85 },
+  tilePlaceholder: { backgroundColor: C.bg, borderColor: C.border, borderStyle: 'dashed' },
+  tileLabelMuted: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5, color: C.faint, textAlign: 'center' },
+  tileValueMuted: { fontSize: 13, fontWeight: '700', color: C.faint, marginTop: 3 },
   error: { fontSize: 13, color: C.red, marginBottom: 10 },
   empty: { fontSize: 13, color: C.muted, paddingVertical: 8 },
-  ticketsSection: { marginTop: 4 },
   ticketsHeadingRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginBottom: 10, gap: 10, flexWrap: 'wrap',
@@ -569,10 +568,6 @@ export default function CarScreen() {
     setEditCar(null);
   }, [editCar, deleteCar]);
 
-  const hasChecked = !!licenseCheck.checkedAt;
-  const points = licenseCheck.licensePoints;
-  const courtsCount = licenseCheck.tickets?.length || 0;
-
   return (
     <ScrollView
       style={s.screen}
@@ -587,33 +582,11 @@ export default function CarScreen() {
         </View>
       </View>
 
-      {/* Driver Profile Card */}
-      <View style={[s.profileCard, isMobile && s.profileCardMobile]}>
-        {/* License Image Placeholder */}
-        <View style={s.licenseBox}>
-          <Text style={s.licenseIcon}>🪪</Text>
-          <Text style={s.licensePlaceholder}>Driver's License</Text>
-        </View>
-
-        {/* Stats */}
-        <View style={s.statsRow}>
-          <View style={[s.stat, { borderColor: points > 0 ? C.orange : C.border }]}>
-            <Text style={[s.statNum, points > 0 && { color: C.orange }]}>
-              {typeof points === 'number' ? points : '—'}
-            </Text>
-            <Text style={s.statLabel}>Points</Text>
-          </View>
-          <View style={[s.stat, { borderColor: courtsCount > 0 ? C.red : C.border }]}>
-            <Text style={[s.statNum, courtsCount > 0 && { color: C.red }]}>
-              {hasChecked ? courtsCount : '—'}
-            </Text>
-            <Text style={s.statLabel}>Courts</Text>
-          </View>
-        </View>
-      </View>
-
       {/* License Status */}
-      <LicenseStatusCard licenseCheck={licenseCheck} isMobile={isMobile} />
+      <DMVStatusCard licenseCheck={licenseCheck} isMobile={isMobile} />
+
+      {/* Courts */}
+      <CourtsCard licenseCheck={licenseCheck} isMobile={isMobile} />
 
       {/* My Cars Header */}
       <View style={s.sectionHeader}>
@@ -682,50 +655,6 @@ const s = StyleSheet.create({
   title: { fontSize: 26, fontWeight: '700', color: C.text },
   titleMobile: { fontSize: 20 },
   sub: { fontSize: 14, color: C.muted, marginTop: 4 },
-
-  profileCard: {
-    backgroundColor: C.card,
-    borderRadius: 18,
-    padding: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 24,
-    marginBottom: 28,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  profileCardMobile: { flexDirection: 'column', gap: 16 },
-
-  licenseBox: {
-    width: 160,
-    height: 100,
-    backgroundColor: C.primaryLight,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: C.primary,
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  licenseIcon: { fontSize: 32 },
-  licensePlaceholder: { fontSize: 11, color: C.muted, fontWeight: '500' },
-
-  statsRow: { flexDirection: 'row', gap: 16, flex: 1, flexWrap: 'wrap' },
-  stat: {
-    flex: 1,
-    minWidth: 80,
-    backgroundColor: C.bg,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    padding: 14,
-    alignItems: 'center',
-  },
-  statNum: { fontSize: 28, fontWeight: '800', color: C.text },
-  statLabel: { fontSize: 12, color: C.muted, fontWeight: '600', marginTop: 4 },
 
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: C.text },
