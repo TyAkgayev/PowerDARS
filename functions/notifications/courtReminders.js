@@ -77,9 +77,13 @@ exports.sendCourtReminders = onSchedule(
 // ── sendTestNotification ─────────────────────────────────────────────────────
 // Called by a "Send Test Notification" button so the caller can confirm their
 // device is actually receiving pushes, without waiting for a real hearing to
-// fall inside the reminder window.
+// fall inside the reminder window. Waits 15s before actually sending so the
+// caller has time to background/close the app first, to test delivery while
+// it's not running rather than just the (already-working) foreground path.
+const TEST_NOTIFICATION_DELAY_MS = 15000;
+
 exports.sendTestNotification = onRequest(
-  { cors: true, invoker: 'public' },
+  { cors: true, invoker: 'public', timeoutSeconds: 30 },
   async (req, res) => {
     cors(req, res, async () => {
       try {
@@ -88,11 +92,12 @@ exports.sendTestNotification = onRequest(
         if (tokensSnap.empty) {
           return res.status(400).json({ error: 'No registered device found. Enable reminders first.' });
         }
+        await new Promise((r) => setTimeout(r, TEST_NOTIFICATION_DELAY_MS));
         await sendToUserTokens(uid, {
           title: 'PowerSync test notification',
           body: 'If you can see this, court reminders are wired up correctly.',
         });
-        res.json({ sent: tokensSnap.size });
+        res.json({ sent: tokensSnap.size, delayedMs: TEST_NOTIFICATION_DELAY_MS });
       } catch (err) {
         if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
         console.error('sendTestNotification error:', err.message);

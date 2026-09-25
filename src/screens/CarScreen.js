@@ -10,6 +10,7 @@ import { enableCourtReminders } from '../utils/pushNotifications';
 const CHECK_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkLicenseStatus';
 const POLL_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollLicenseStatus';
 const SEND_TEST_NOTIFICATION_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/sendTestNotification';
+const TEST_NOTIFICATION_DELAY_SECONDS = 15;
 const POLL_INTERVAL_MS = 4000;
 
 const CAR_IMAGES = {
@@ -241,6 +242,16 @@ function fmtCheckedAt(checkedAt) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+// "2027-03-10" -> "03-10-27". Plain string manipulation (not Date parsing) so
+// there's no UTC-vs-local timezone shift risk; falls back to the raw value
+// if the agent ever returns something other than ISO YYYY-MM-DD.
+function fmtHearingDate(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
+  if (!m) return dateStr;
+  const [, yyyy, mm, dd] = m;
+  return `${mm}-${dd}-${yyyy.slice(2)}`;
+}
+
 function LicenseStatusCard({ licenseCheck, isMobile }) {
   const [checking, setChecking] = useState(false);
   const [triggerError, setTriggerError] = useState(null);
@@ -261,8 +272,14 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
     }
   }, []);
 
+  const [testSecondsLeft, setTestSecondsLeft] = useState(0);
+
   const handleSendTest = useCallback(async () => {
     setTestState('loading');
+    setTestSecondsLeft(TEST_NOTIFICATION_DELAY_SECONDS);
+    const countdown = setInterval(() => {
+      setTestSecondsLeft((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
     try {
       const res = await authedFetch(SEND_TEST_NOTIFICATION_URL, { method: 'POST' });
       const data = await res.json();
@@ -271,6 +288,9 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
     } catch (e) {
       setTestState('error');
       setNotifyError(e.message);
+    } finally {
+      clearInterval(countdown);
+      setTestSecondsLeft(0);
     }
   }, []);
 
@@ -402,11 +422,11 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
               onPress={handleSendTest}
               disabled={testState === 'loading'}
             >
-              {testState === 'loading'
-                ? <ActivityIndicator color={C.primary} size="small" />
-                : <Text style={tt.notifyBtnTxt}>
-                    {testState === 'sent' ? '✅ Sent' : 'Send Test Notification'}
-                  </Text>}
+              <Text style={tt.notifyBtnTxt}>
+                {testState === 'loading'
+                  ? `Sending in ${testSecondsLeft}s… close the app now`
+                  : (testState === 'sent' ? '✅ Sent' : 'Send Test Notification')}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
@@ -418,9 +438,9 @@ function LicenseStatusCard({ licenseCheck, isMobile }) {
             {tickets.map((t, i) => (
               <View key={t.ticketNumber || i} style={tt.pillRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={tt.rowTitle}>{t.violationCharge || t.raw || 'Ticket'}</Text>
-                  {!!t.ticketNumber && <Text style={tt.rowMeta}>#{t.ticketNumber}</Text>}
-                  {!!t.hearingDate && <Text style={tt.rowHearing}>Hearing: {t.hearingDate}</Text>}
+                  <Text style={tt.rowTitle}>{t.ticketNumber ? `#${t.ticketNumber}` : (t.raw || 'Ticket')}</Text>
+                  {!!t.violationCharge && <Text style={tt.rowMeta}>{t.violationCharge}</Text>}
+                  {!!t.hearingDate && <Text style={tt.rowHearing}>Hearing: {fmtHearingDate(t.hearingDate)}</Text>}
                 </View>
                 {!!t.violationPoints && <Text style={tt.rowAmount}>{t.violationPoints} pts</Text>}
               </View>
