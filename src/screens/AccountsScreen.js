@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, Modal, TextInput, Alert, Platform, useWindowDimensions,
 } from 'react-native';
+import { deleteField } from 'firebase/firestore';
 import { useApp } from '../context/AppContext';
 import { ICONS } from '../config/icons';
 import { usePlaidLink } from '../hooks/usePlaidLink';
@@ -524,9 +525,39 @@ export default function AccountsScreen() {
   const [editingAccount, setEditingAccount] = useState(null);
   const [editingCategory, setEditingCategory] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const banks = accounts.filter(a => a.kind === 'bank');
   const categoryAccounts = accounts.filter(a => a.kind === 'category');
+  const uncategorizedAccounts = categoryAccounts.filter(a => !a.categoryId);
+  // Accounts created before the category rework have neither kind — still in
+  // Firestore untouched, just not shown until restored.
+  const legacyAccounts = accounts.filter(a => !a.kind);
+
+  const handleRestoreLegacy = async () => {
+    setRestoring(true);
+    try {
+      await Promise.all(legacyAccounts.map(acc => {
+        if (BANK_TYPE_OPTS.some(t => t.id === acc.type)) {
+          // Was already a bank account (checking/savings) — just tag it so
+          // it resumes showing in the Banks section with its Plaid link and
+          // fields intact.
+          return updateAccount(acc.id, { kind: 'bank' });
+        }
+        // Everything else comes back as a bare, uncategorized account —
+        // stripped of its old type-specific fields per request, name only.
+        return updateAccount(acc.id, { kind: 'category', categoryId: null, fields: deleteField(), type: deleteField() });
+      }));
+      notify(
+        'Accounts Restored',
+        `Restored ${legacyAccounts.length} account(s). Assign a category to each one under "Uncategorized" below.`
+      );
+    } catch (e) {
+      notify('Restore Failed', e.message);
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const handleAddBank = async (data) => {
     await addAccount(data);
@@ -639,6 +670,18 @@ export default function AccountsScreen() {
         )}
       </View>
 
+      {/* One-time restore for accounts created before categories existed */}
+      {legacyAccounts.length > 0 && (
+        <View style={sc.migrationBanner}>
+          <Text style={sc.migrationTxt}>
+            Found {legacyAccounts.length} account{legacyAccounts.length === 1 ? '' : 's'} from before categories existed.
+          </Text>
+          <TouchableOpacity style={sc.migrationBtn} onPress={handleRestoreLegacy} disabled={restoring}>
+            <Text style={sc.migrationBtnTxt}>{restoring ? 'Restoring…' : 'Restore Accounts'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Empty state */}
       {accounts.length === 0 && (
         <View style={sc.empty}>
@@ -665,6 +708,22 @@ export default function AccountsScreen() {
               onEdit={() => setEditingAccount(account)}
               onDelete={() => handleDelete(account)}
               onLinkBank={() => handleLinkBank(account)}
+              isMobile={isMobile}
+            />
+          ))}
+        </View>
+      )}
+      {uncategorizedAccounts.length > 0 && (
+        <View style={{ marginBottom: 8 }}>
+          <Text style={sc.groupLabel}>❓ Uncategorized</Text>
+          {uncategorizedAccounts.map(account => (
+            <AccountCard
+              key={account.id}
+              account={account}
+              category={null}
+              color={account.color || ACCT_COLORS[accounts.indexOf(account) % ACCT_COLORS.length]}
+              onEdit={() => setEditingAccount(account)}
+              onDelete={() => handleDelete(account)}
               isMobile={isMobile}
             />
           ))}
@@ -765,6 +824,14 @@ const sc = StyleSheet.create({
   categoriesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   newCategoryTxt: { color: C.primary, fontWeight: '600', fontSize: 13 },
   emptyMsgSmall: { fontSize: 13, color: C.muted, lineHeight: 19 },
+  migrationBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10,
+    backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FDBA74', borderRadius: 12,
+    padding: 14, marginBottom: 20,
+  },
+  migrationTxt: { fontSize: 13, color: '#9A3412', fontWeight: '600', flexShrink: 1 },
+  migrationBtn: { backgroundColor: '#F97316', borderRadius: 10, paddingVertical: 9, paddingHorizontal: 16 },
+  migrationBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
   empty: { alignItems: 'center', paddingVertical: 80 },
   emptyIcon: { fontSize: 56, marginBottom: 16 },
   emptyTitle: { fontSize: 24, fontWeight: '700', color: C.text, marginBottom: 8 },
