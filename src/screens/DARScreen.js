@@ -4,6 +4,7 @@ import {
   StyleSheet, useWindowDimensions, Alert, Platform, ActivityIndicator,
 } from 'react-native';
 import { useApp } from '../context/AppContext';
+import { authedFetch } from '../utils/api';
 
 // react-native-web's Alert.alert is a no-op stub, so on web this must go
 // through window.alert instead or it silently does nothing.
@@ -13,6 +14,54 @@ function notify(title, message) {
     return;
   }
   Alert.alert(title, message);
+}
+
+// Maps an account's name to its Cloud Function endpoints, for accounts that
+// actually have an agent wired up. Accounts not listed here fall back to the
+// "not connected yet" message. Add an entry here each time a new category
+// agent goes live (see functions/agents/bestBuyCreditCardAgent.js for the
+// pattern: create/poll endpoints that read the account's category fields
+// dynamically and write into accountReports).
+const ACCOUNT_AGENTS = {
+  'Best Buy': {
+    checkUrl: 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkBestBuyStatus',
+    pollUrl: 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollBestBuyStatus',
+  },
+};
+
+const POLL_INTERVAL_MS = 4000;
+
+function pollAgentUntilDone(pollUrl, runId) {
+  return new Promise((resolve) => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await authedFetch(`${pollUrl}?runId=${encodeURIComponent(runId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Check failed');
+        if (data.status === 'completed' || data.status === 'failed') {
+          clearInterval(interval);
+          resolve(data);
+        }
+      } catch (e) {
+        clearInterval(interval);
+        resolve({ status: 'failed', error: e.message });
+      }
+    }, POLL_INTERVAL_MS);
+  });
+}
+
+// Starts a real check for one account and waits for it to finish. Throws if
+// the account has no agent, the trigger fails, or the run itself fails.
+async function refreshOneAccount(account) {
+  const agent = ACCOUNT_AGENTS[account.name];
+  if (!agent) {
+    throw new Error(`"${account.name}" isn't wired to an agent yet.`);
+  }
+  const res = await authedFetch(agent.checkUrl, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to start check');
+  const result = await pollAgentUntilDone(agent.pollUrl, data.runId);
+  if (result.status === 'failed') throw new Error(result.error || 'Check failed');
 }
 
 const C = {
@@ -113,7 +162,7 @@ function AccountTile({ account, category, report, onRefresh, refreshing }) {
 // A colored left border + heading "brackets" every account tile belonging to
 // that category, visually grouping them the way the Accounts screen groups
 // account cards.
-function CategoryGroup({ category, accounts, accountReports, onRefreshAccount, refreshingId }) {
+function CategoryGroup({ category, accounts, accountReports, onRefreshAccount, refreshingIds }) {
   return (
     <View style={[g.group, { borderLeftColor: category.color }]}>
       <View style={g.heading}>
@@ -128,7 +177,7 @@ function CategoryGroup({ category, accounts, accountReports, onRefreshAccount, r
             category={category}
             report={accountReports[account.id]}
             onRefresh={() => onRefreshAccount(account)}
-            refreshing={refreshingId === account.id}
+            refreshing={refreshingIds.has(account.id)}
           />
         ))}
       </View>
@@ -142,33 +191,52 @@ export default function DARScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  // accountId currently refreshing, 'all' while a refresh-all is in flight,
-  // or null. No agents exist yet — see the TODOs below — so this only tracks
-  // the stub's fake loading state for now.
-  const [refreshingId, setRefreshingId] = useState(null);
+  // Account ids currently mid-refresh (per-tile spinners), and a separate
+  // flag for the Refresh All button's own spinner.
+  const [refreshingIds, setRefreshingIds] = useState(new Set());
+  const [allRefreshing, setAllRefreshing] = useState(false);
 
   const categoryAccounts = accounts.filter(a => a.kind === 'category');
 
-  // TODO: wire to a real Cloud Function trigger-then-poll call once each
-  // category has an agent, following the checkLicenseStatus/pollLicenseStatus
-  // pattern already used for the Car screen's agents (see CarScreen.js's
-  // useCheckPolling). This stub just proves out the seam.
   const handleRefreshAccount = async (account) => {
-    setRefreshingId(account.id);
+    setRefreshingIds(prev => new Set(prev).add(account.id));
     try {
-      notify('Not connected yet', `"${account.name}" isn't wired to an agent yet. This button will trigger a live refresh once one is.`);
+      await refreshOneAccount(account);
+    } catch (e) {
+      notify('Refresh Failed', e.message);
     } finally {
-      setRefreshingId(null);
+      setRefreshingIds(prev => {
+        const next = new Set(prev);
+        next.delete(account.id);
+        return next;
+      });
     }
   };
 
-  // TODO: same seam as above, but for every account at once.
   const handleRefreshAll = async () => {
-    setRefreshingId('all');
+    const connected = categoryAccounts.filter(a => ACCOUNT_AGENTS[a.name]);
+    if (connected.length === 0) {
+      notify('Not connected yet', "None of your accounts are wired to an agent yet.");
+      return;
+    }
+    setAllRefreshing(true);
+    setRefreshingIds(new Set(connected.map(a => a.id)));
     try {
-      notify('Not connected yet', "Refresh All will trigger every account's agent once they're wired up.");
+      await Promise.all(connected.map(async (account) => {
+        try {
+          await refreshOneAccount(account);
+        } catch (e) {
+          notify('Refresh Failed', `${account.name}: ${e.message}`);
+        } finally {
+          setRefreshingIds(prev => {
+            const next = new Set(prev);
+            next.delete(account.id);
+            return next;
+          });
+        }
+      }));
     } finally {
-      setRefreshingId(null);
+      setAllRefreshing(false);
     }
   };
 
@@ -180,8 +248,8 @@ export default function DARScreen() {
           <Text style={s.title}>📊 DAR</Text>
           <Text style={s.subtitle}>Daily Account Report</Text>
         </View>
-        <TouchableOpacity style={s.refreshAllBtn} onPress={handleRefreshAll} disabled={refreshingId === 'all'}>
-          {refreshingId === 'all'
+        <TouchableOpacity style={s.refreshAllBtn} onPress={handleRefreshAll} disabled={allRefreshing}>
+          {allRefreshing
             ? <ActivityIndicator size="small" color="#fff" />
             : <Text style={s.refreshAllTxt}>🔄 Refresh All</Text>}
         </TouchableOpacity>
@@ -210,7 +278,7 @@ export default function DARScreen() {
               accounts={items}
               accountReports={accountReports}
               onRefreshAccount={handleRefreshAccount}
-              refreshingId={refreshingId}
+              refreshingIds={refreshingIds}
             />
           );
         })
