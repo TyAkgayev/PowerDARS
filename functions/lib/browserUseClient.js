@@ -4,11 +4,14 @@
 const BROWSER_USE_API = 'https://api.browser-use.com/api/v4';
 const BROWSER_USE_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
-async function createBrowserUseRun(apiKey, task, secretBindings) {
+// `browserSettings` (e.g. { profileId }) lets a caller reuse a persistent
+// browser-use profile — cookies/login state carry over between runs instead
+// of every run starting as a fresh, logged-out browser.
+async function createBrowserUseRun(apiKey, task, secretBindings, browserSettings) {
   const createResp = await fetch(`${BROWSER_USE_API}/runs`, {
     method: 'POST',
     headers: { 'X-Browser-Use-API-Key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task, secretBindings }),
+    body: JSON.stringify({ task, secretBindings, ...(browserSettings ? { browserSettings } : {}) }),
   });
   if (!createResp.ok) {
     throw new Error(`browser-use create run failed: ${createResp.status} ${await createResp.text()}`);
@@ -41,8 +44,8 @@ async function pollBrowserUseRunOnce(apiKey, runId) {
 
 // Runs a task to completion by polling, for callers that aren't waiting on a
 // synchronous button press (e.g. a scheduled job).
-async function runBrowserUseTaskToCompletion(apiKey, task, secretBindings, maxWaitMs = 8 * 60 * 1000) {
-  const runId = await createBrowserUseRun(apiKey, task, secretBindings);
+async function runBrowserUseTaskToCompletion(apiKey, task, secretBindings, maxWaitMs = 8 * 60 * 1000, browserSettings) {
+  const runId = await createBrowserUseRun(apiKey, task, secretBindings, browserSettings);
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
     const result = await pollBrowserUseRunOnce(apiKey, runId);

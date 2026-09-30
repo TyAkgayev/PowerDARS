@@ -9,6 +9,8 @@ import { enableCourtReminders, checkCourtRemindersEnabled } from '../utils/pushN
 
 const CHECK_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkLicenseStatus';
 const POLL_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollLicenseStatus';
+const CHECK_INSURANCE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkInsuranceStatus';
+const POLL_INSURANCE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollInsuranceStatus';
 const SEND_TEST_NOTIFICATION_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/sendTestNotification';
 const TEST_NOTIFICATION_DELAY_SECONDS = 15;
 const POLL_INTERVAL_MS = 4000;
@@ -276,59 +278,85 @@ function daysUntilNextHearing(tickets) {
   return Math.round((soonest - today.getTime()) / 86400000);
 }
 
-function DMVStatusCard({ licenseCheck, isMobile }) {
+// Generic "start a run, then poll for the outcome" hook shared by any
+// StatusPanel-backed check on this card (DMV, Insurance, ...). The agent can
+// take a while (real login flow), so the button's request only starts the
+// run — this polls in the background rather than blocking on it.
+function useCheckPolling({ checkUrl, pollUrl, runningStatus, runId: existingRunId }) {
   const [checking, setChecking] = useState(false);
-  const [triggerError, setTriggerError] = useState(null);
+  const [error, setError] = useState(null);
   const pollRef = useRef(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
-  // The agent can take a while (real login flow), so we don't block the
-  // button's request on it — start the run, then poll for the outcome.
   const pollUntilDone = useCallback((runId) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const res = await authedFetch(`${POLL_LICENSE_STATUS_URL}?runId=${encodeURIComponent(runId)}`);
+        const res = await authedFetch(`${pollUrl}?runId=${encodeURIComponent(runId)}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Check failed');
         if (data.status === 'completed' || data.status === 'failed') {
           stopPolling();
           setChecking(false);
-          if (data.status === 'failed') setTriggerError(data.error || 'Check failed');
+          if (data.status === 'failed') setError(data.error || 'Check failed');
         }
       } catch (e) {
         stopPolling();
         setChecking(false);
-        setTriggerError(e.message);
+        setError(e.message);
       }
     }, POLL_INTERVAL_MS);
-  }, [stopPolling]);
+  }, [stopPolling, pollUrl]);
 
-  const handleCheck = useCallback(async () => {
+  const trigger = useCallback(async () => {
     setChecking(true);
-    setTriggerError(null);
+    setError(null);
     try {
-      const res = await authedFetch(CHECK_LICENSE_STATUS_URL, { method: 'POST' });
+      const res = await authedFetch(checkUrl, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to start check');
       pollUntilDone(data.runId);
     } catch (e) {
       setChecking(false);
-      setTriggerError(e.message);
+      setError(e.message);
     }
-  }, [pollUntilDone]);
+  }, [checkUrl, pollUntilDone]);
 
   // Resume polling if a check was already in flight (e.g. page refresh).
   useEffect(() => {
-    if (licenseCheck?.status === 'running' && licenseCheck?.runId && !pollRef.current) {
+    if (runningStatus === 'running' && existingRunId && !pollRef.current) {
       setChecking(true);
-      pollUntilDone(licenseCheck.runId);
+      pollUntilDone(existingRunId);
     }
     return stopPolling;
-  }, [licenseCheck?.status, licenseCheck?.runId, pollUntilDone, stopPolling]);
+  }, [runningStatus, existingRunId, pollUntilDone, stopPolling]);
+
+  return { checking, error, trigger };
+}
+
+function DMVStatusCard({ licenseCheck, insuranceCheck, isMobile }) {
+  const dmv = useCheckPolling({
+    checkUrl: CHECK_LICENSE_STATUS_URL,
+    pollUrl: POLL_LICENSE_STATUS_URL,
+    runningStatus: licenseCheck?.status,
+    runId: licenseCheck?.runId,
+  });
+  const insurance = useCheckPolling({
+    checkUrl: CHECK_INSURANCE_STATUS_URL,
+    pollUrl: POLL_INSURANCE_STATUS_URL,
+    runningStatus: insuranceCheck?.status,
+    runId: insuranceCheck?.runId,
+  });
+  const checking = dmv.checking || insurance.checking;
+  const triggerError = dmv.error || insurance.error;
+
+  const handleCheck = useCallback(() => {
+    dmv.trigger();
+    insurance.trigger();
+  }, [dmv.trigger, insurance.trigger]);
 
   const checkedAtLabel = fmtCheckedAt(licenseCheck?.checkedAt);
   const licenseStat = licenseCheck?.licenseStatus;
@@ -369,15 +397,19 @@ function DMVStatusCard({ licenseCheck, isMobile }) {
           sub={nextHearingDays !== null ? 'next hearing' : null}
           alert={nextHearingDays !== null}
         />
-        <StatusPanel label="INSURANCE" placeholder />
+        <StatusPanel
+          label="INSURANCE"
+          value={insuranceCheck?.insuranceStatus}
+          alert={insuranceCheck?.insuranceStatus ? insuranceCheck.insuranceStatus === 'Overdue' : undefined}
+        />
         <StatusPanel label="LEASE" placeholder />
         <StatusPanel label="BRIDGES & TUNNELS" placeholder />
         <StatusPanel label="DOF PAYMENT PLAN" placeholder />
       </View>
 
-      {(triggerError || licenseCheck?.status === 'failed') && (
+      {(triggerError || licenseCheck?.status === 'failed' || insuranceCheck?.status === 'failed') && (
         <Text style={tt.error}>
-          {triggerError || licenseCheck?.error || 'Something went wrong checking DMV status.'}
+          {triggerError || licenseCheck?.error || insuranceCheck?.error || 'Something went wrong checking DMV status.'}
         </Text>
       )}
 
@@ -578,7 +610,7 @@ const tt = StyleSheet.create({
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
 export default function CarScreen() {
-  const { cars, addCar, updateCar, deleteCar, licenseCheck } = useApp();
+  const { cars, addCar, updateCar, deleteCar, licenseCheck, insuranceCheck } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -613,7 +645,7 @@ export default function CarScreen() {
       </View>
 
       {/* License Status */}
-      <DMVStatusCard licenseCheck={licenseCheck} isMobile={isMobile} />
+      <DMVStatusCard licenseCheck={licenseCheck} insuranceCheck={insuranceCheck} isMobile={isMobile} />
 
       {/* Courts */}
       <CourtsCard licenseCheck={licenseCheck} isMobile={isMobile} />

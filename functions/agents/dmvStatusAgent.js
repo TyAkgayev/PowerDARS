@@ -6,6 +6,13 @@
 // exploring — that's what made earlier runs slow. Login credentials are
 // passed as secretBindings so the raw values never appear in the task
 // prompt/logs, only the aliases do.
+//
+// Every run reuses the same browser-use profile (DMV_PROFILE_ID) so cookies
+// and browser identity persist across runs instead of each one looking like
+// a brand-new device logging in — NY.gov's session itself will still likely
+// have expired between runs (they're at most daily), so the task prompt
+// still handles logging in when needed, but a consistent browser fingerprint
+// is less likely to read as suspicious than a fresh one every time.
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
@@ -19,11 +26,14 @@ const NYGOV_USERNAME      = defineSecret('NYGOV_USERNAME');
 const NYGOV_PASSWORD      = defineSecret('NYGOV_PASSWORD');
 const BROWSER_USE_API_KEY = defineSecret('BROWSER_USE_API_KEY');
 const NYGOV_LOGIN_URL = 'https://my.ny.gov/LoginV4/login.xhtml';
+const DMV_PROFILE_ID = 'a900c7b5-70d8-41a7-a1ad-f6283c449dfa'; // "PowerSync DMV" profile in browser-use cloud
+const DMV_BROWSER_SETTINGS = { profileId: DMV_PROFILE_ID };
 
 function buildDMVCheckTask() {
   return (
-    `Go to ${NYGOV_LOGIN_URL}. Log in by typing ny_username into the username field ` +
-    `and ny_password into the password field, then submit. ` +
+    `Go to ${NYGOV_LOGIN_URL}. If you land on a dashboard already signed in (this browser profile ` +
+    `may already have an active session), skip straight to the next step. Otherwise log in by typing ` +
+    `ny_username into the username field and ny_password into the password field, then submit. ` +
     `After logging in, navigate to "MyDMV Online". On that page: ` +
     `(1) find the driving/license status, e.g. "Valid" or "Suspended", and record it; ` +
     `(2) find the vehicle registration status, e.g. "Valid" or "Suspended", and record it, ` +
@@ -88,7 +98,9 @@ async function checkAndStoreLicenseStatus(uid, apiKey, nygovUsername, nygovPassw
   const secretBindings = nygovSecretBindings(nygovUsername, nygovPassword);
   const docRef = db.collection('users').doc(uid).collection('licenseStatus').doc('latest');
   try {
-    const resultText = await runBrowserUseTaskToCompletion(apiKey, buildDMVCheckTask(), secretBindings, 15 * 60 * 1000);
+    const resultText = await runBrowserUseTaskToCompletion(
+      apiKey, buildDMVCheckTask(), secretBindings, 15 * 60 * 1000, DMV_BROWSER_SETTINGS
+    );
     const dmv = parseDMVCheckResult(resultText);
     await docRef.set({
       ...dmv, status: 'completed', error: null,
@@ -117,7 +129,9 @@ exports.checkLicenseStatus = onRequest(
       try {
         const uid = await requireUser(req);
         const secretBindings = nygovSecretBindings(NYGOV_USERNAME.value(), NYGOV_PASSWORD.value());
-        const runId = await createBrowserUseRun(BROWSER_USE_API_KEY.value(), buildDMVCheckTask(), secretBindings);
+        const runId = await createBrowserUseRun(
+          BROWSER_USE_API_KEY.value(), buildDMVCheckTask(), secretBindings, DMV_BROWSER_SETTINGS
+        );
         await db.collection('users').doc(uid).collection('licenseStatus').doc('latest').set({
           runId, status: 'running', ...EMPTY_DMV_RESULT, error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),

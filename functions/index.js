@@ -394,6 +394,11 @@ exports.checkLicenseStatus = dmvStatusAgent.checkLicenseStatus;
 exports.pollLicenseStatus = dmvStatusAgent.pollLicenseStatus;
 exports.checkLicenseStatusScheduled = dmvStatusAgent.checkLicenseStatusScheduled;
 
+const geicoInsuranceAgent = require('./agents/geicoInsuranceAgent');
+exports.checkInsuranceStatus = geicoInsuranceAgent.checkInsuranceStatus;
+exports.pollInsuranceStatus = geicoInsuranceAgent.pollInsuranceStatus;
+exports.checkInsuranceStatusScheduled = geicoInsuranceAgent.checkInsuranceStatusScheduled;
+
 // ── Notifications ────────────────────────────────────────────────────────────
 const courtReminders = require('./notifications/courtReminders');
 exports.sendCourtReminders = courtReminders.sendCourtReminders;

@@ -13,6 +13,8 @@ const EMPTY_LICENSE_CHECK = {
   tickets: [], status: null, error: null, checkedAt: null,
 };
 
+const EMPTY_INSURANCE_CHECK = { insuranceStatus: null, status: null, error: null, checkedAt: null };
+
 const currentMonthStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -48,6 +50,7 @@ export function AppProvider({ children }) {
   const userName = userNameOverride || deriveDefaultName(user);
   const [cars, setCars] = useState([]);
   const [licenseCheck, setLicenseCheck] = useState(EMPTY_LICENSE_CHECK);
+  const [insuranceCheck, setInsuranceCheck] = useState(EMPTY_INSURANCE_CHECK);
   const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
   const [workSchedule, setWorkSchedule] = useState({});
   const [projectedExpenses, setProjectedExpenses] = useState({});
@@ -134,6 +137,15 @@ export function AppProvider({ children }) {
     if (!uid) return;
     const unsub = onSnapshot(uDoc('licenseStatus', 'latest'), (snap) => {
       setLicenseCheck(snap.exists() ? snap.data() : EMPTY_LICENSE_CHECK);
+    });
+    return unsub;
+  }, [uid]);
+
+  // Insurance status check results listener
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = onSnapshot(uDoc('insuranceStatus', 'latest'), (snap) => {
+      setInsuranceCheck(snap.exists() ? snap.data() : EMPTY_INSURANCE_CHECK);
     });
     return unsub;
   }, [uid]);
@@ -397,6 +409,7 @@ export function AppProvider({ children }) {
       saveDars, getCurrentMonthDars, updateBankBalance,
       cars, addCar, updateCar, deleteCar,
       licenseCheck,
+      insuranceCheck,
       rnProfile, saveRNProfile,
       workSchedule, setWorkShift, deleteWorkShift,
     }}>
