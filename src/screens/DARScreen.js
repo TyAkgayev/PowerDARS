@@ -110,11 +110,70 @@ function fmtDate(value) {
   return `${mm}-${dd}-${yyyy.slice(2)}`;
 }
 
+// ─── Credit card field matching & status logic ──────────────────────────────
+// Category fields are free-form (id/label/type the user chose), so the
+// concise credit-card view below matches the fields it needs by label
+// pattern rather than a fixed id — best-effort, but consistent with how the
+// rest of this app already matches fields by label (see DashboardScreen.js).
+// Any field that doesn't match a pattern just stays under "More details"
+// instead of disappearing.
+function isCreditCardCategory(category) {
+  return /credit/i.test(category?.name || '');
+}
+
+function findFieldByPatterns(fields, patterns, type) {
+  return fields.find(f => (!type || f.type === type) && patterns.some(re => re.test(f.label)));
+}
+
+const BALANCE_PATTERNS = [/available\s*balance/i, /^balance$/i, /\bbalance\b/i];
+const AMOUNT_DUE_PATTERNS = [/amount\s*due/i, /minimum\s*due/i, /payment\s*due\s*amount/i];
+const DUE_DATE_PATTERNS = [/next\s*payment\s*date/i, /payment\s*due\s*date/i, /due\s*date/i];
+
+// Parses "YYYY-MM-DD" into a local-midnight Date, or null — string parsing
+// (not `new Date(str)`) so there's no UTC-vs-local shift, same as fmtDate.
+function parseIsoDate(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!m) return null;
+  const [, yyyy, mm, dd] = m;
+  return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+}
+
+// "Current" is decided here, by app logic, from the raw numbers/dates the
+// agent retrieves — the agent itself never judges this. A card counts as
+// past due if it has a due date that's already passed while a balance is
+// still owed; otherwise it's current. Returns null (unknown) when there
+// isn't enough data yet to tell either way.
+function computeCreditCardStatus(fields, values) {
+  const dueDateField = findFieldByPatterns(fields, DUE_DATE_PATTERNS, 'date');
+  const amountDueField = findFieldByPatterns(fields, AMOUNT_DUE_PATTERNS, 'currency');
+  if (!dueDateField || !amountDueField) return null;
+
+  const dueDate = parseIsoDate(values?.[dueDateField.id]);
+  const amountDue = parseFloat(values?.[amountDueField.id]);
+  if (!dueDate || isNaN(amountDue)) return null;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return (dueDate < today && amountDue > 0) ? 'past_due' : 'current';
+}
+
+const CREDIT_STATUS_META = {
+  current:  { label: 'Current',  color: '#22C55E' },
+  past_due: { label: 'Past Due', color: '#EF4444' },
+  unknown:  { label: 'Unknown',  color: C.faint },
+};
+
 // ─── Account Tile ───────────────────────────────────────────────────────────
 // Each account's field values, sourced from accountReports (the "latest
 // known state" doc a future daily agent writes to — see AppContext.js). Shows
-// a dashed placeholder for any field nothing has populated yet.
-function AccountTile({ account, category, report, onRefresh, refreshing }) {
+// a dashed placeholder for any field nothing has populated yet. Credit card
+// accounts get the more concise CreditCardTile instead (see below).
+function AccountTile(props) {
+  if (isCreditCardCategory(props.category)) return <CreditCardTile {...props} />;
+  return <GenericAccountTile {...props} />;
+}
+
+function GenericAccountTile({ account, category, report, onRefresh, refreshing }) {
   const fields = category?.fields || [];
   const checkedAtLabel = fmtCheckedAt(report?.checkedAt);
   const accentColor = account.color || category?.color || C.primary;
@@ -143,6 +202,96 @@ function AccountTile({ account, category, report, onRefresh, refreshing }) {
           );
         })}
       </View>
+
+      <View style={t.tileFooter}>
+        <Text style={t.tileRefreshed} numberOfLines={1}>
+          {checkedAtLabel ? `Refreshed ${checkedAtLabel}` : 'Not yet populated'}
+        </Text>
+        <TouchableOpacity style={t.refreshBtn} onPress={onRefresh} disabled={refreshing}>
+          {refreshing
+            ? <ActivityIndicator size="small" color={C.primary} />
+            : <Text style={t.refreshTxt}>🔄 Refresh</Text>}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// Concise credit-card tile: Current/Past Due at a glance, then just balance,
+// amount due, and due date — everything else from the category collapses
+// behind a "More details" toggle instead of listing every field up front.
+function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
+  const [expanded, setExpanded] = useState(false);
+  const fields = category?.fields || [];
+  const values = report?.values || {};
+  const checkedAtLabel = fmtCheckedAt(report?.checkedAt);
+  const accentColor = account.color || category?.color || C.primary;
+
+  const balanceField = findFieldByPatterns(fields, BALANCE_PATTERNS, 'currency');
+  const amountDueField = findFieldByPatterns(fields, AMOUNT_DUE_PATTERNS, 'currency');
+  const dueDateField = findFieldByPatterns(fields, DUE_DATE_PATTERNS, 'date');
+  const highlightIds = new Set([balanceField, amountDueField, dueDateField].filter(Boolean).map(f => f.id));
+  const otherFields = fields.filter(f => !highlightIds.has(f.id));
+
+  const status = computeCreditCardStatus(fields, values) || 'unknown';
+  const statusMeta = CREDIT_STATUS_META[status];
+
+  return (
+    <View style={[t.tile, t.ccTile]}>
+      <View style={t.tileHeader}>
+        <View style={[t.tileIcon, { backgroundColor: `${accentColor}20` }]}>
+          <Text style={t.tileIconTxt}>{account.icon || category?.icon || '💳'}</Text>
+        </View>
+        <Text style={t.tileName} numberOfLines={1}>{account.name}</Text>
+      </View>
+
+      <View style={[t.ccStatusBadge, { backgroundColor: `${statusMeta.color}20`, borderColor: statusMeta.color }]}>
+        <Text style={[t.ccStatusTxt, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+      </View>
+
+      <View style={t.tileFields}>
+        <View style={t.fieldRow}>
+          <Text style={t.fieldLabel}>{balanceField?.label || 'Balance'}</Text>
+          <Text style={[t.fieldValue, !balanceField && t.fieldValuePlaceholder]}>
+            {balanceField ? (fmtFieldValue(balanceField, values[balanceField.id]) ?? '—') : 'N/A'}
+          </Text>
+        </View>
+        <View style={t.fieldRow}>
+          <Text style={t.fieldLabel}>{amountDueField?.label || 'Amount Due'}</Text>
+          <Text style={[t.fieldValue, !amountDueField && t.fieldValuePlaceholder]}>
+            {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
+          </Text>
+        </View>
+        <View style={t.fieldRow}>
+          <Text style={t.fieldLabel}>{dueDateField?.label || 'Due Date'}</Text>
+          <Text style={[t.fieldValue, !dueDateField && t.fieldValuePlaceholder]}>
+            {dueDateField ? (fmtFieldValue(dueDateField, values[dueDateField.id]) ?? '—') : 'N/A'}
+          </Text>
+        </View>
+      </View>
+
+      {otherFields.length > 0 && (
+        <TouchableOpacity onPress={() => setExpanded(e => !e)} style={t.moreToggle}>
+          <Text style={t.moreToggleTxt}>
+            {expanded ? 'Hide details ▲' : `More details (${otherFields.length}) ▼`}
+          </Text>
+        </TouchableOpacity>
+      )}
+      {expanded && (
+        <View style={[t.tileFields, { marginTop: 8 }]}>
+          {otherFields.map(field => {
+            const display = fmtFieldValue(field, values[field.id]);
+            return (
+              <View key={field.id} style={t.fieldRow}>
+                <Text style={t.fieldLabel} numberOfLines={1}>{field.label}</Text>
+                <Text style={[t.fieldValue, display === null && t.fieldValuePlaceholder]}>
+                  {display ?? '—'}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       <View style={t.tileFooter}>
         <Text style={t.tileRefreshed} numberOfLines={1}>
@@ -343,4 +492,12 @@ const t = StyleSheet.create({
     paddingVertical: 6, alignItems: 'center',
   },
   refreshTxt: { fontSize: 11, color: C.primary, fontWeight: '600' },
+  ccTile: { width: 190, padding: 12 },
+  ccStatusBadge: {
+    alignSelf: 'flex-start', borderWidth: 1.5, borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 3, marginBottom: 10,
+  },
+  ccStatusTxt: { fontSize: 11, fontWeight: '700' },
+  moreToggle: { paddingVertical: 4 },
+  moreToggleTxt: { fontSize: 11, color: C.primary, fontWeight: '600' },
 });
