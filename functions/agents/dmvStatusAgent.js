@@ -102,19 +102,19 @@ async function checkAndStoreLicenseStatus(uid, apiKey, nygovUsername, nygovPassw
   const prompt = withSelfAssessment(buildDMVCheckTask());
   const docRef = db.collection('users').doc(uid).collection('licenseStatus').doc('latest');
   try {
-    const resultText = await runBrowserUseTaskToCompletion(
+    const { resultText, durationMinutes } = await runBrowserUseTaskToCompletion(
       apiKey, prompt, secretBindings, 15 * 60 * 1000, DMV_BROWSER_SETTINGS
     );
     const dmv = parseDMVCheckResult(resultText);
     await docRef.set({
-      ...dmv, prompt, rawResult: resultText, status: 'completed', error: null,
+      ...dmv, prompt, rawResult: resultText, status: 'completed', error: null, durationMinutes,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return { ...dmv, status: 'completed' };
   } catch (err) {
     await docRef.set({
       ...EMPTY_DMV_RESULT,
-      prompt, rawResult: null,
+      prompt, rawResult: null, durationMinutes: err.durationMinutes ?? null,
       status: 'failed',
       error: err.message,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -139,7 +139,7 @@ exports.checkLicenseStatus = onRequest(
           BROWSER_USE_API_KEY.value(), prompt, secretBindings, DMV_BROWSER_SETTINGS
         );
         await db.collection('users').doc(uid).collection('licenseStatus').doc('latest').set({
-          runId, prompt, rawResult: null, status: 'running', ...EMPTY_DMV_RESULT, error: null,
+          runId, prompt, rawResult: null, status: 'running', durationMinutes: null, ...EMPTY_DMV_RESULT, error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         res.json({ runId, status: 'running' });
@@ -173,7 +173,7 @@ exports.pollLicenseStatus = onRequest(
 
         if (!result.ok) {
           await docRef.set({
-            ...EMPTY_DMV_RESULT, rawResult: null, status: 'failed', error: result.error,
+            ...EMPTY_DMV_RESULT, rawResult: null, status: 'failed', error: result.error, durationMinutes: result.durationMinutes,
             checkedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           return res.json({ status: 'failed', error: result.error });
@@ -181,7 +181,7 @@ exports.pollLicenseStatus = onRequest(
 
         const dmv = parseDMVCheckResult(result.resultText);
         await docRef.set({
-          ...dmv, rawResult: result.resultText, status: 'completed', error: null,
+          ...dmv, rawResult: result.resultText, status: 'completed', error: null, durationMinutes: result.durationMinutes,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         res.json({ status: 'completed', ...dmv });

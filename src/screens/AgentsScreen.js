@@ -80,6 +80,12 @@ function fmtCheckedAt(checkedAt) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+function fmtDuration(minutes) {
+  if (typeof minutes !== 'number') return null;
+  if (minutes < 1) return `${Math.round(minutes * 60)} sec`;
+  return `${minutes.toFixed(1)} min`;
+}
+
 function prettyJson(text) {
   if (!text) return null;
   try {
@@ -184,6 +190,7 @@ function AgentCard({ agent }) {
   const status = agent.data?.status;
   const success = agent.data?.success;
   const checkedAtLabel = fmtCheckedAt(agent.data?.checkedAt);
+  const durationLabel = status === 'running' || checking ? null : fmtDuration(agent.data?.durationMinutes);
 
   // The agent's own self-assessed success/failure judgment, separate from
   // `status` (which only reflects whether the browser-use run technically
@@ -231,6 +238,11 @@ function AgentCard({ agent }) {
         <View style={[a.badge, { backgroundColor: `${badgeColor}20`, borderColor: badgeColor }]}>
           <Text style={[a.badgeTxt, { color: badgeColor }]}>{badgeText}</Text>
         </View>
+        {!!durationLabel && (
+          <View style={a.durationPill}>
+            <Text style={a.durationTxt}>⏱ {durationLabel}</Text>
+          </View>
+        )}
         <Text style={a.checkedAt}>
           {checkedAtLabel ? `Last checked ${checkedAtLabel}` : ''}
         </Text>
@@ -300,6 +312,8 @@ const a = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' },
   badge: { borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
   badgeTxt: { fontSize: 12, fontWeight: '700' },
+  durationPill: { backgroundColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  durationTxt: { fontSize: 12, fontWeight: '600', color: C.muted },
   checkedAt: { fontSize: 11, color: C.faint },
   error: { fontSize: 12, color: C.red, marginBottom: 8 },
   summaryBox: { backgroundColor: C.primaryLight, borderRadius: 10, padding: 10, marginBottom: 10 },

@@ -70,19 +70,19 @@ async function checkAndStoreInsuranceStatus(uid, apiKey, geicoUsername, geicoPas
   const prompt = withSelfAssessment(buildGeicoCheckTask());
   const docRef = db.collection('users').doc(uid).collection('insuranceStatus').doc('latest');
   try {
-    const resultText = await runBrowserUseTaskToCompletion(
+    const { resultText, durationMinutes } = await runBrowserUseTaskToCompletion(
       apiKey, prompt, secretBindings, 10 * 60 * 1000, GEICO_BROWSER_SETTINGS
     );
     const geico = parseGeicoCheckResult(resultText);
     await docRef.set({
-      ...geico, prompt, rawResult: resultText, status: 'completed', error: null,
+      ...geico, prompt, rawResult: resultText, status: 'completed', error: null, durationMinutes,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return { ...geico, status: 'completed' };
   } catch (err) {
     await docRef.set({
       ...EMPTY_GEICO_RESULT,
-      prompt, rawResult: null,
+      prompt, rawResult: null, durationMinutes: err.durationMinutes ?? null,
       status: 'failed',
       error: err.message,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -107,7 +107,7 @@ exports.checkInsuranceStatus = onRequest(
           BROWSER_USE_API_KEY.value(), prompt, secretBindings, GEICO_BROWSER_SETTINGS
         );
         await db.collection('users').doc(uid).collection('insuranceStatus').doc('latest').set({
-          runId, prompt, rawResult: null, status: 'running', ...EMPTY_GEICO_RESULT, error: null,
+          runId, prompt, rawResult: null, status: 'running', durationMinutes: null, ...EMPTY_GEICO_RESULT, error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         res.json({ runId, status: 'running' });
@@ -141,7 +141,7 @@ exports.pollInsuranceStatus = onRequest(
 
         if (!result.ok) {
           await docRef.set({
-            ...EMPTY_GEICO_RESULT, rawResult: null, status: 'failed', error: result.error,
+            ...EMPTY_GEICO_RESULT, rawResult: null, status: 'failed', error: result.error, durationMinutes: result.durationMinutes,
             checkedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           return res.json({ status: 'failed', error: result.error });
@@ -149,7 +149,7 @@ exports.pollInsuranceStatus = onRequest(
 
         const geico = parseGeicoCheckResult(result.resultText);
         await docRef.set({
-          ...geico, rawResult: result.resultText, status: 'completed', error: null,
+          ...geico, rawResult: result.resultText, status: 'completed', error: null, durationMinutes: result.durationMinutes,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         res.json({ status: 'completed', ...geico });

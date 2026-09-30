@@ -30,6 +30,19 @@ function extractSelfAssessment(parsed) {
   };
 }
 
+// How long browser-use says the run took, in minutes (rounded to 0.1), from
+// the run's own createdAt/updatedAt timestamps. The v4 API has no explicit
+// duration field, but once a run is terminal its updatedAt is when it
+// finished. Using browser-use's timestamps (rather than timing it ourselves)
+// keeps this accurate no matter when we happen to poll. Every agent stores
+// this as "durationMinutes" so the Agents screen can show it.
+function runDurationMinutes(run) {
+  const start = Date.parse(run?.createdAt);
+  const end = Date.parse(run?.updatedAt);
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.round(Math.max(0, end - start) / 6000) / 10;
+}
+
 // `browserSettings` (e.g. { profileId }) lets a caller reuse a persistent
 // browser-use profile — cookies/login state carry over between runs instead
 // of every run starting as a fresh, logged-out browser.
@@ -47,7 +60,8 @@ async function createBrowserUseRun(apiKey, task, secretBindings, browserSettings
 }
 
 // Checks a run once. Returns { done: false } while still running, or
-// { done: true, ok, resultText } once it reaches a terminal status. A real
+// { done: true, ok, resultText, durationMinutes } once it reaches a terminal
+// status. A real
 // login flow (MFA, slow pages) can take a while, so callers should call this
 // repeatedly rather than blocking on a single long wait.
 async function pollBrowserUseRunOnce(apiKey, runId) {
@@ -62,22 +76,29 @@ async function pollBrowserUseRunOnce(apiKey, runId) {
     headers: { 'X-Browser-Use-API-Key': apiKey },
   });
   const run = await runResp.json();
+  const durationMinutes = runDurationMinutes(run);
   if (status !== 'completed') {
-    return { done: true, ok: false, error: `browser-use run ${status}: ${run.result || 'no details'}` };
+    return { done: true, ok: false, error: `browser-use run ${status}: ${run.result || 'no details'}`, durationMinutes };
   }
-  return { done: true, ok: true, resultText: run.result };
+  return { done: true, ok: true, resultText: run.result, durationMinutes };
 }
 
 // Runs a task to completion by polling, for callers that aren't waiting on a
-// synchronous button press (e.g. a scheduled job).
+// synchronous button press (e.g. a scheduled job). Resolves to
+// { resultText, durationMinutes }; a failed run throws an Error carrying
+// `durationMinutes` so callers can still store how long it ran.
 async function runBrowserUseTaskToCompletion(apiKey, task, secretBindings, maxWaitMs = 8 * 60 * 1000, browserSettings) {
   const runId = await createBrowserUseRun(apiKey, task, secretBindings, browserSettings);
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
     const result = await pollBrowserUseRunOnce(apiKey, runId);
     if (result.done) {
-      if (!result.ok) throw new Error(result.error);
-      return result.resultText;
+      if (!result.ok) {
+        const err = new Error(result.error);
+        err.durationMinutes = result.durationMinutes;
+        throw err;
+      }
+      return { resultText: result.resultText, durationMinutes: result.durationMinutes };
     }
     await new Promise((r) => setTimeout(r, 5000));
   }

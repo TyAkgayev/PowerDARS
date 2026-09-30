@@ -103,18 +103,18 @@ async function checkAndStoreBestBuy(uid, apiKey, username, password) {
   const secretBindings = bestBuySecretBindings(username, password);
   const prompt = withSelfAssessment(buildBestBuyTask(fields));
   try {
-    const resultText = await runBrowserUseTaskToCompletion(
+    const { resultText, durationMinutes } = await runBrowserUseTaskToCompletion(
       apiKey, prompt, secretBindings, 10 * 60 * 1000, BESTBUY_BROWSER_SETTINGS
     );
     const { values, success, summary } = parseBestBuyResult(resultText, fields);
     await docRef.set({
-      accountId, values, success, summary, prompt, rawResult: resultText, status: 'completed', error: null,
+      accountId, values, success, summary, prompt, rawResult: resultText, status: 'completed', error: null, durationMinutes,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return { accountId, values, status: 'completed' };
   } catch (err) {
     await docRef.set({
-      accountId, values: {}, success: false, summary: null, prompt, rawResult: null,
+      accountId, values: {}, success: false, summary: null, prompt, rawResult: null, durationMinutes: err.durationMinutes ?? null,
       status: 'failed', error: err.message,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
@@ -139,7 +139,7 @@ exports.checkBestBuyStatus = onRequest(
           BROWSER_USE_API_KEY.value(), prompt, secretBindings, BESTBUY_BROWSER_SETTINGS
         );
         await db.collection('users').doc(uid).collection('accountReports').doc(accountId).set({
-          accountId, runId, prompt, rawResult: null, status: 'running', values: {}, success: null, summary: null, error: null,
+          accountId, runId, prompt, rawResult: null, status: 'running', durationMinutes: null, values: {}, success: null, summary: null, error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         res.json({ runId, accountId, status: 'running' });
@@ -175,7 +175,7 @@ exports.pollBestBuyStatus = onRequest(
         if (!result.ok) {
           await docRef.set({
             accountId, values: {}, success: false, summary: null, rawResult: null,
-            status: 'failed', error: result.error,
+            status: 'failed', error: result.error, durationMinutes: result.durationMinutes,
             checkedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           return res.json({ status: 'failed', error: result.error });
@@ -183,7 +183,7 @@ exports.pollBestBuyStatus = onRequest(
 
         const { values, success, summary } = parseBestBuyResult(result.resultText, fields);
         await docRef.set({
-          accountId, values, success, summary, rawResult: result.resultText, status: 'completed', error: null,
+          accountId, values, success, summary, rawResult: result.resultText, status: 'completed', error: null, durationMinutes: result.durationMinutes,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         res.json({ status: 'completed', accountId, values });
