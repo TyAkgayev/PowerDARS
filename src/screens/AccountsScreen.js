@@ -42,18 +42,11 @@ const C = {
   income: '#22C55E',
 };
 
-const ACCT_TYPES = [
-  { id: 'checking',     label: 'Checking',     icon: ICONS.checking },
-  { id: 'savings',      label: 'Savings',       icon: ICONS.savings },
-  { id: 'credit',       label: 'Credit Card',   icon: ICONS.credit },
-  { id: 'investment',   label: 'Investment',    icon: ICONS.investment },
-  { id: 'utility',      label: 'Utility',       icon: ICONS.utility },
-  { id: 'subscription', label: 'Subscription',  icon: ICONS.subscription },
-  { id: 'phone',        label: 'Phone',         icon: ICONS.phone },
-  { id: 'loan',         label: 'Loan',          icon: ICONS.loan },
-  { id: 'car_lease',    label: 'Car Lease',     icon: ICONS.car_lease },
-  { id: 'car_insurance',label: 'Car Insurance', icon: ICONS.car_insurance },
-  { id: 'other',        label: 'Other',         icon: ICONS.other },
+// Banks stay special-cased outside the category system (Plaid linking,
+// dashboard balance editing) — everything else is a user-defined category.
+const BANK_TYPE_OPTS = [
+  { id: 'checking', label: 'Checking', icon: ICONS.checking },
+  { id: 'savings',  label: 'Savings',  icon: ICONS.savings },
 ];
 
 const FIELD_TYPES = [
@@ -66,158 +59,117 @@ const FIELD_TYPES = [
 const PALETTE = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4','#EC4899','#8B5CF6'];
 const ACCT_COLORS = PALETTE;
 
-// No due-day fields — every account is paid on whatever day you choose,
-// scheduled manually from the Bills checklist instead of on autopay.
-const SUGGESTED_FIELDS = {
-  checking:     [{ label: 'Balance', type: 'currency' }, { label: 'Available Balance', type: 'currency' }],
-  savings:      [{ label: 'Balance', type: 'currency' }],
-  credit:       [{ label: 'Amount Due', type: 'currency' }],
-  investment:   [{ label: 'Portfolio Value', type: 'currency' }, { label: 'Daily Change', type: 'currency' }],
-  utility:      [{ label: 'Amount Due', type: 'currency' }],
-  subscription: [{ label: 'Monthly Amount', type: 'currency' }],
-  phone:        [{ label: 'Monthly Bill', type: 'currency' }, { label: 'Account Number', type: 'text' }],
-  loan:         [{ label: 'Remaining Balance', type: 'currency' }, { label: 'Monthly Payment', type: 'currency' }],
-  car_lease:    [{ label: 'Monthly Payment', type: 'currency' }, { label: 'Remaining Payments', type: 'number' }, { label: 'Lease End Date', type: 'text' }],
-  car_insurance:[{ label: 'Monthly Premium', type: 'currency' }, { label: 'Policy Number', type: 'text' }, { label: 'Coverage End Date', type: 'text' }],
-  other:        [{ label: 'Amount', type: 'currency' }],
+const SUGGESTED_BANK_FIELDS = {
+  checking: [{ label: 'Balance', type: 'currency' }, { label: 'Available Balance', type: 'currency' }],
+  savings:  [{ label: 'Balance', type: 'currency' }],
 };
-
-const BANK_TYPES = ['checking', 'savings'];
-const CREDIT_TYPES = ['credit'];
 
 function makeId() {
   return Math.random().toString(36).slice(2, 9);
 }
 
-// ─── Add/Edit Account Modal ───────────────────────────────────────────────────
-function AccountModal({ visible, onClose, onSave, existing, isMobile, bankAccounts = [] }) {
-  const isEdit = !!existing;
-  const typeObj = existing ? ACCT_TYPES.find(t => t.id === existing.type) : null;
-
-  const [name, setName] = useState(existing?.name || '');
-  const [type, setType] = useState(existing?.type || 'checking');
-  const [lastFour, setLastFour] = useState(existing?.lastFour || '');
-  const [color, setColor] = useState(existing?.color || PALETTE[0]);
-  const [icon, setIcon] = useState(existing?.icon || '');
-  const [fields, setFields] = useState(existing?.fields || []);
-  const [linkedBankId, setLinkedBankId] = useState(existing?.linkedBankId || null);
+// ─── Field Builder ──────────────────────────────────────────────────────────
+// Add/remove {label, type} rows. Used by CategoryModal (defines a category's
+// shared fields) and BankAccountModal (banks keep their own per-account
+// fields, unchanged from before).
+function FieldBuilder({ fields, onChange }) {
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [newFieldType, setNewFieldType] = useState('currency');
 
-  const handleTypeChange = (t) => {
-    setType(t);
-    const typeInfo = ACCT_TYPES.find(a => a.id === t);
-    if (typeInfo && !isEdit) setIcon(typeInfo.icon);
-    if (!isEdit && fields.length === 0) {
-      const suggested = (SUGGESTED_FIELDS[t] || []).map(f => ({ id: makeId(), ...f }));
-      setFields(suggested);
-    }
-  };
-
   const addField = () => {
     if (!newFieldLabel.trim()) return;
-    setFields(prev => [...prev, { id: makeId(), label: newFieldLabel.trim(), type: newFieldType }]);
+    onChange([...fields, { id: makeId(), label: newFieldLabel.trim(), type: newFieldType }]);
     setNewFieldLabel('');
     setNewFieldType('currency');
   };
 
-  const removeField = (id) => setFields(prev => prev.filter(f => f.id !== id));
+  const removeField = (id) => onChange(fields.filter(f => f.id !== id));
+
+  return (
+    <>
+      {fields.length === 0 && (
+        <Text style={m.emptyFields}>No fields yet. Add fields below.</Text>
+      )}
+      {fields.map(field => (
+        <View key={field.id} style={m.fieldRow}>
+          <View style={m.fieldInfo}>
+            <Text style={m.fieldName}>{field.label}</Text>
+            <Text style={m.fieldType}>{FIELD_TYPES.find(f => f.id === field.type)?.label || field.type}</Text>
+          </View>
+          <TouchableOpacity onPress={() => removeField(field.id)} style={m.fieldDel}>
+            <Text style={m.fieldDelTxt}>×</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <View style={m.addFieldRow}>
+        <TextInput
+          style={[m.input, { flex: 1 }]}
+          placeholder="Field name..."
+          value={newFieldLabel}
+          onChangeText={setNewFieldLabel}
+          placeholderTextColor={C.faint}
+        />
+        <View style={m.fieldTypeSelect}>
+          {FIELD_TYPES.map(ft => (
+            <TouchableOpacity
+              key={ft.id}
+              style={[m.ftBtn, newFieldType === ft.id && m.ftBtnActive]}
+              onPress={() => setNewFieldType(ft.id)}
+            >
+              <Text style={[m.ftTxt, newFieldType === ft.id && m.ftTxtActive]}>{ft.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity style={m.addFieldBtn} onPress={addField}>
+          <Text style={m.addFieldTxt}>+ Add</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+}
+
+// ─── Category Modal ─────────────────────────────────────────────────────────
+// A category defines the fields every account assigned to it will track —
+// e.g. "Credit Card" -> Balance, Amount Due, APR — set once here instead of
+// per account.
+function CategoryModal({ visible, onClose, onSave, existing }) {
+  const isEdit = !!existing;
+  const [name, setName] = useState(existing?.name || '');
+  const [icon, setIcon] = useState(existing?.icon || '');
+  const [color, setColor] = useState(existing?.color || PALETTE[0]);
+  const [fields, setFields] = useState(existing?.fields || []);
 
   const handleSave = async () => {
     if (!name.trim()) return;
-    const typeInfo = ACCT_TYPES.find(t2 => t2.id === type);
-    await onSave({
-      name: name.trim(),
-      type,
-      lastFour: lastFour.trim() || null,
-      color,
-      icon: icon || typeInfo?.icon || '🏦',
-      fields,
-      linkedBankId: type === 'credit' ? linkedBankId : null,
-    });
+    await onSave({ name: name.trim(), icon: icon || '📂', color, fields });
     onClose();
   };
 
-  const selectedType = ACCT_TYPES.find(t => t.id === type);
-
   return (
-    <Modal visible={visible} transparent animationType={isMobile ? 'slide' : 'fade'} onRequestClose={onClose}>
-      <View style={[m.overlay, isMobile && m.overlayMobile]}>
-        <ScrollView contentContainerStyle={[m.scrollContent, isMobile && m.scrollContentMobile]}>
-          <View style={[m.box, isMobile && m.boxMobile]}>
-            <Text style={m.title}>{isEdit ? 'Edit Account' : 'Add Account'}</Text>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={m.overlay}>
+        <ScrollView contentContainerStyle={m.scrollContent}>
+          <View style={m.box}>
+            <Text style={m.title}>{isEdit ? 'Edit Category' : 'New Category'}</Text>
 
-            {/* Name */}
-            <Text style={m.label}>Account Name</Text>
+            <Text style={m.label}>Category Name</Text>
             <TextInput
               style={m.input}
-              placeholder="e.g. Chase Checking"
+              placeholder="e.g. Credit Card"
               value={name}
               onChangeText={setName}
               placeholderTextColor={C.faint}
             />
 
-            {/* Type */}
-            <Text style={m.label}>Account Type</Text>
-            <View style={m.typeGrid}>
-              {ACCT_TYPES.map(t => (
-                <TouchableOpacity
-                  key={t.id}
-                  style={[m.typeBtn, type === t.id && m.typeBtnActive]}
-                  onPress={() => handleTypeChange(t.id)}
-                >
-                  <Text style={m.typeIcon}>{t.icon}</Text>
-                  <Text style={[m.typeTxt, type === t.id && m.typeTxtActive]}>{t.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Last four (optional) */}
-            <Text style={m.label}>Last 4 Digits (optional)</Text>
-            <TextInput
-              style={m.input}
-              placeholder="e.g. 5678"
-              value={lastFour}
-              onChangeText={setLastFour}
-              keyboardType="number-pad"
-              maxLength={4}
-              placeholderTextColor={C.faint}
-            />
-
-            {/* Icon */}
             <Text style={m.label}>Icon (emoji)</Text>
             <TextInput
               style={m.input}
-              placeholder={selectedType?.icon || '🏦'}
+              placeholder="📂"
               value={icon}
               onChangeText={setIcon}
               placeholderTextColor={C.faint}
             />
 
-            {type === 'credit' && bankAccounts.length > 0 && (
-              <>
-                <Text style={m.label}>Draws from (bank account)</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  <TouchableOpacity
-                    style={[m.typeBtn, linkedBankId === null && m.typeBtnActive]}
-                    onPress={() => setLinkedBankId(null)}
-                  >
-                    <Text style={[m.typeTxt, linkedBankId === null && m.typeTxtActive]}>None</Text>
-                  </TouchableOpacity>
-                  {bankAccounts.map(bank => (
-                    <TouchableOpacity
-                      key={bank.id}
-                      style={[m.typeBtn, linkedBankId === bank.id && m.typeBtnActive]}
-                      onPress={() => setLinkedBankId(bank.id)}
-                    >
-                      <Text style={[m.typeTxt, linkedBankId === bank.id && m.typeTxtActive]}>{bank.name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </>
-            )}
-
-            {/* Color */}
             <Text style={m.label}>Color</Text>
             <View style={m.colorRow}>
               {PALETTE.map(col => (
@@ -229,64 +181,250 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile, bankAccoun
               ))}
             </View>
 
-            {/* Fields */}
-            <Text style={m.label}>Tracked Fields</Text>
-            {fields.length === 0 && (
-              <Text style={m.emptyFields}>No fields yet. Add fields below.</Text>
-            )}
-            {fields.map(field => (
-              <View key={field.id} style={m.fieldRow}>
-                <View style={m.fieldInfo}>
-                  <Text style={m.fieldName}>{field.label}</Text>
-                  <Text style={m.fieldType}>{FIELD_TYPES.find(f => f.id === field.type)?.label || field.type}</Text>
-                </View>
-                <TouchableOpacity onPress={() => removeField(field.id)} style={m.fieldDel}>
-                  <Text style={m.fieldDelTxt}>×</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
+            <Text style={m.label}>Fields every account in this category tracks</Text>
+            <FieldBuilder fields={fields} onChange={setFields} />
 
-            {/* Add field */}
-            <View style={m.addFieldRow}>
-              <TextInput
-                style={[m.input, { flex: 1 }]}
-                placeholder="Field name..."
-                value={newFieldLabel}
-                onChangeText={setNewFieldLabel}
-                placeholderTextColor={C.faint}
-              />
-              <View style={m.fieldTypeSelect}>
-                {FIELD_TYPES.map(ft => (
-                  <TouchableOpacity
-                    key={ft.id}
-                    style={[m.ftBtn, newFieldType === ft.id && m.ftBtnActive]}
-                    onPress={() => setNewFieldType(ft.id)}
-                  >
-                    <Text style={[m.ftTxt, newFieldType === ft.id && m.ftTxtActive]}>{ft.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <TouchableOpacity style={m.addFieldBtn} onPress={addField}>
-                <Text style={m.addFieldTxt}>+ Add</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Suggested fields */}
-            {!isEdit && (SUGGESTED_FIELDS[type] || []).length > 0 && fields.length === 0 && (
-              <TouchableOpacity
-                style={m.suggestBtn}
-                onPress={() => setFields((SUGGESTED_FIELDS[type] || []).map(f => ({ id: makeId(), ...f })))}
-              >
-                <Text style={m.suggestTxt}>Use suggested fields for {selectedType?.label}</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Actions */}
             <View style={m.btnRow}>
               <TouchableOpacity style={m.cancelBtn} onPress={onClose}>
                 <Text style={m.cancelTxt}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={m.saveBtn} onPress={handleSave}>
+                <Text style={m.saveTxt}>{isEdit ? 'Save Changes' : 'Create Category'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Bank Account Modal ─────────────────────────────────────────────────────
+// Unchanged from before the category rework — banks stay special-cased for
+// Plaid linking and keep their own per-account fields.
+function BankAccountModal({ visible, onClose, onSave, existing, isMobile }) {
+  const isEdit = !!existing;
+  const [name, setName] = useState(existing?.name || '');
+  const [type, setType] = useState(existing?.type || 'checking');
+  const [lastFour, setLastFour] = useState(existing?.lastFour || '');
+  const [color, setColor] = useState(existing?.color || PALETTE[0]);
+  const [icon, setIcon] = useState(existing?.icon || '');
+  const [fields, setFields] = useState(
+    existing?.fields || SUGGESTED_BANK_FIELDS.checking.map(f => ({ id: makeId(), ...f }))
+  );
+
+  const handleTypeChange = (t) => {
+    setType(t);
+    const typeInfo = BANK_TYPE_OPTS.find(a => a.id === t);
+    if (typeInfo && !isEdit) setIcon(typeInfo.icon);
+    if (!isEdit && fields.length === 0) {
+      setFields((SUGGESTED_BANK_FIELDS[t] || []).map(f => ({ id: makeId(), ...f })));
+    }
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    const typeInfo = BANK_TYPE_OPTS.find(t => t.id === type);
+    await onSave({
+      kind: 'bank',
+      name: name.trim(),
+      type,
+      lastFour: lastFour.trim() || null,
+      color,
+      icon: icon || typeInfo?.icon || '🏦',
+      fields,
+    });
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType={isMobile ? 'slide' : 'fade'} onRequestClose={onClose}>
+      <View style={[m.overlay, isMobile && m.overlayMobile]}>
+        <ScrollView contentContainerStyle={[m.scrollContent, isMobile && m.scrollContentMobile]}>
+          <View style={[m.box, isMobile && m.boxMobile]}>
+            <Text style={m.title}>{isEdit ? 'Edit Bank Account' : 'Add Bank Account'}</Text>
+
+            <Text style={m.label}>Account Name</Text>
+            <TextInput
+              style={m.input}
+              placeholder="e.g. Chase Checking"
+              value={name}
+              onChangeText={setName}
+              placeholderTextColor={C.faint}
+            />
+
+            <Text style={m.label}>Account Type</Text>
+            <View style={m.typeGrid}>
+              {BANK_TYPE_OPTS.map(t => (
+                <TouchableOpacity
+                  key={t.id}
+                  style={[m.typeBtn, type === t.id && m.typeBtnActive]}
+                  onPress={() => handleTypeChange(t.id)}
+                >
+                  <Text style={m.typeIcon}>{t.icon}</Text>
+                  <Text style={[m.typeTxt, type === t.id && m.typeTxtActive]}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={m.label}>Last 4 Digits (optional)</Text>
+            <TextInput
+              style={m.input}
+              placeholder="e.g. 5678"
+              value={lastFour}
+              onChangeText={setLastFour}
+              keyboardType="number-pad"
+              maxLength={4}
+              placeholderTextColor={C.faint}
+            />
+
+            <Text style={m.label}>Icon (emoji)</Text>
+            <TextInput
+              style={m.input}
+              placeholder={BANK_TYPE_OPTS.find(t => t.id === type)?.icon || '🏦'}
+              value={icon}
+              onChangeText={setIcon}
+              placeholderTextColor={C.faint}
+            />
+
+            <Text style={m.label}>Color</Text>
+            <View style={m.colorRow}>
+              {PALETTE.map(col => (
+                <TouchableOpacity
+                  key={col}
+                  style={[m.colorSwatch, { backgroundColor: col }, color === col && m.colorSwatchActive]}
+                  onPress={() => setColor(col)}
+                />
+              ))}
+            </View>
+
+            <Text style={m.label}>Tracked Fields</Text>
+            <FieldBuilder fields={fields} onChange={setFields} />
+
+            <View style={m.btnRow}>
+              <TouchableOpacity style={m.cancelBtn} onPress={onClose}>
+                <Text style={m.cancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={m.saveBtn} onPress={handleSave}>
+                <Text style={m.saveTxt}>{isEdit ? 'Save Changes' : 'Add Bank Account'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Category Account Modal ─────────────────────────────────────────────────
+// For every non-bank account: pick a category instead of building fields —
+// the account inherits that category's field schema.
+function CategoryAccountModal({ visible, onClose, onSave, existing, isMobile, categories }) {
+  const isEdit = !!existing;
+  const [name, setName] = useState(existing?.name || '');
+  const [categoryId, setCategoryId] = useState(existing?.categoryId || categories[0]?.id || null);
+  const [lastFour, setLastFour] = useState(existing?.lastFour || '');
+  const [color, setColor] = useState(existing?.color || PALETTE[0]);
+  const [icon, setIcon] = useState(existing?.icon || '');
+
+  const selectedCategory = categories.find(cat => cat.id === categoryId);
+
+  const handleSave = async () => {
+    if (!name.trim() || !categoryId) return;
+    await onSave({
+      kind: 'category',
+      name: name.trim(),
+      categoryId,
+      lastFour: lastFour.trim() || null,
+      color,
+      icon: icon || selectedCategory?.icon || '📂',
+    });
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType={isMobile ? 'slide' : 'fade'} onRequestClose={onClose}>
+      <View style={[m.overlay, isMobile && m.overlayMobile]}>
+        <ScrollView contentContainerStyle={[m.scrollContent, isMobile && m.scrollContentMobile]}>
+          <View style={[m.box, isMobile && m.boxMobile]}>
+            <Text style={m.title}>{isEdit ? 'Edit Account' : 'Add Account'}</Text>
+
+            <Text style={m.label}>Account Name</Text>
+            <TextInput
+              style={m.input}
+              placeholder="e.g. Chase Sapphire"
+              value={name}
+              onChangeText={setName}
+              placeholderTextColor={C.faint}
+            />
+
+            <Text style={m.label}>Category</Text>
+            {categories.length === 0 ? (
+              <Text style={m.emptyFields}>No categories yet — create one first, then come back here.</Text>
+            ) : (
+              <View style={m.typeGrid}>
+                {categories.map(cat => (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[m.typeBtn, categoryId === cat.id && m.typeBtnActive]}
+                    onPress={() => setCategoryId(cat.id)}
+                  >
+                    <Text style={m.typeIcon}>{cat.icon}</Text>
+                    <Text style={[m.typeTxt, categoryId === cat.id && m.typeTxtActive]}>{cat.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <Text style={m.label}>Last 4 Digits (optional)</Text>
+            <TextInput
+              style={m.input}
+              placeholder="e.g. 5678"
+              value={lastFour}
+              onChangeText={setLastFour}
+              keyboardType="number-pad"
+              maxLength={4}
+              placeholderTextColor={C.faint}
+            />
+
+            <Text style={m.label}>Icon (emoji)</Text>
+            <TextInput
+              style={m.input}
+              placeholder={selectedCategory?.icon || '📂'}
+              value={icon}
+              onChangeText={setIcon}
+              placeholderTextColor={C.faint}
+            />
+
+            <Text style={m.label}>Color</Text>
+            <View style={m.colorRow}>
+              {PALETTE.map(col => (
+                <TouchableOpacity
+                  key={col}
+                  style={[m.colorSwatch, { backgroundColor: col }, color === col && m.colorSwatchActive]}
+                  onPress={() => setColor(col)}
+                />
+              ))}
+            </View>
+
+            {selectedCategory && (selectedCategory.fields || []).length > 0 && (
+              <>
+                <Text style={m.label}>Tracked fields (from "{selectedCategory.name}")</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {selectedCategory.fields.map(f => (
+                    <View key={f.id} style={[c.fieldChip, { borderColor: selectedCategory.color }]}>
+                      <Text style={[c.fieldChipTxt, { color: selectedCategory.color }]}>{f.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <View style={m.btnRow}>
+              <TouchableOpacity style={m.cancelBtn} onPress={onClose}>
+                <Text style={m.cancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={m.saveBtn} onPress={handleSave} disabled={!categoryId}>
                 <Text style={m.saveTxt}>{isEdit ? 'Save Changes' : 'Add Account'}</Text>
               </TouchableOpacity>
             </View>
@@ -297,9 +435,32 @@ function AccountModal({ visible, onClose, onSave, existing, isMobile, bankAccoun
   );
 }
 
+// ─── Category Chip ──────────────────────────────────────────────────────────
+function CategoryChip({ category, accountCount, onEdit, onDelete }) {
+  return (
+    <View style={[cc.chip, { borderColor: category.color }]}>
+      <Text style={cc.chipIcon}>{category.icon}</Text>
+      <Text style={[cc.chipName, { color: category.color }]}>{category.name}</Text>
+      {accountCount > 0 && <Text style={cc.chipCount}>{accountCount}</Text>}
+      <TouchableOpacity onPress={onEdit} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+        <Text style={cc.chipAction}>✏️</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={onDelete} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+        <Text style={cc.chipAction}>🗑️</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 // ─── Account Card ─────────────────────────────────────────────────────────────
-function AccountCard({ account, onEdit, onDelete, onLinkBank, color, isMobile, bankAccounts = [] }) {
+function AccountCard({ account, category, onEdit, onDelete, onLinkBank, color, isMobile }) {
+  const isBank = account.kind === 'bank';
   const isLinked = !!account.plaidLinked;
+  const fields = isBank ? (account.fields || []) : (category?.fields || []);
+  const typeLabel = isBank
+    ? (BANK_TYPE_OPTS.find(t => t.id === account.type)?.label || account.type)
+    : (category?.name || 'Uncategorized');
+
   return (
     <View style={[c.card, isMobile && c.cardMobile]}>
       <View style={c.left}>
@@ -316,31 +477,26 @@ function AccountCard({ account, onEdit, onDelete, onLinkBank, color, isMobile, b
             )}
           </View>
           <Text style={c.type}>
-            {ACCT_TYPES.find(t => t.id === account.type)?.label || account.type}
+            {typeLabel}
             {account.lastFour ? ` •••• ${account.lastFour}` : ''}
           </Text>
-          {(account.fields || []).length > 0 && (
+          {fields.length > 0 && (
             <View style={c.fields}>
-              {(account.fields || []).map(f => (
+              {fields.map(f => (
                 <View key={f.id} style={[c.fieldChip, { borderColor: color }]}>
                   <Text style={[c.fieldChipTxt, { color }]}>{f.label}</Text>
                 </View>
               ))}
             </View>
           )}
-          {account.type === 'credit' && bankAccounts.length > 0 && (
-            <Text style={c.drawsFrom}>
-              {account.linkedBankId
-                ? `Draws from: ${bankAccounts.find(b => b.id === account.linkedBankId)?.name || 'Unknown'}`
-                : 'No bank linked'}
-            </Text>
-          )}
         </View>
       </View>
       <View style={[c.actions, isMobile && c.actionsMobile]}>
-        <TouchableOpacity style={c.linkBtn} onPress={onLinkBank}>
-          <Text style={c.linkTxt}>{isLinked ? '🔄 Re-link' : '🏦 Link Bank'}</Text>
-        </TouchableOpacity>
+        {isBank && (
+          <TouchableOpacity style={c.linkBtn} onPress={onLinkBank}>
+            <Text style={c.linkTxt}>{isLinked ? '🔄 Re-link' : '🏦 Link Bank'}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={c.editBtn} onPress={onEdit}>
           <Text style={c.editTxt}>Edit</Text>
         </TouchableOpacity>
@@ -354,17 +510,32 @@ function AccountCard({ account, onEdit, onDelete, onLinkBank, color, isMobile, b
 
 // ─── AccountsScreen ───────────────────────────────────────────────────────────
 export default function AccountsScreen() {
-  const { accounts, addAccount, updateAccount, deleteAccount } = useApp();
+  const {
+    accounts, addAccount, updateAccount, deleteAccount,
+    categories, addCategory, updateCategory, deleteCategory,
+  } = useApp();
   const { openLink, syncBalances } = usePlaidLink();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
-  const [showAdd, setShowAdd] = useState(false);
+
+  const [showAddBank, setShowAddBank] = useState(false);
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [showAddCategory, setShowAddCategory] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
+  const [editingCategory, setEditingCategory] = useState(null);
   const [syncing, setSyncing] = useState(false);
 
-  const handleAdd = async (data) => {
+  const banks = accounts.filter(a => a.kind === 'bank');
+  const categoryAccounts = accounts.filter(a => a.kind === 'category');
+
+  const handleAddBank = async (data) => {
     await addAccount(data);
-    setShowAdd(false);
+    setShowAddBank(false);
+  };
+
+  const handleAddAccount = async (data) => {
+    await addAccount(data);
+    setShowAddAccount(false);
   };
 
   const handleEdit = async (data) => {
@@ -400,22 +571,72 @@ export default function AccountsScreen() {
     }
   };
 
+  const handleSaveCategory = async (data) => {
+    if (editingCategory) {
+      await updateCategory(editingCategory.id, data);
+      setEditingCategory(null);
+    } else {
+      await addCategory(data);
+      setShowAddCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = async (category) => {
+    const inUse = categoryAccounts.filter(a => a.categoryId === category.id).length;
+    if (inUse > 0) {
+      notify('Category in Use', `${inUse} account(s) use "${category.name}". Reassign or delete them first.`);
+      return;
+    }
+    const ok = await confirmAsync('Delete Category', `Delete the "${category.name}" category? This cannot be undone.`);
+    if (ok) deleteCategory(category.id);
+  };
+
   return (
     <ScrollView style={sc.screen} contentContainerStyle={[sc.content, isMobile && sc.contentMobile]}>
       {/* Header */}
       <View style={[sc.header, isMobile && sc.headerMobile]}>
         <View>
           <Text style={sc.title}>Accounts</Text>
-          <Text style={sc.subtitle}>Manage your tracked accounts and their fields</Text>
+          <Text style={sc.subtitle}>Manage your tracked accounts and categories</Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
+        <View style={sc.headerActions}>
           <TouchableOpacity style={sc.syncBtn} onPress={handleSync} disabled={syncing}>
             <Text style={sc.syncTxt}>{syncing ? 'Syncing…' : '🔄 Sync Balances'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[sc.addBtn, isMobile && sc.addBtnMobile]} onPress={() => setShowAdd(true)}>
+          <TouchableOpacity style={sc.addBtnSecondary} onPress={() => setShowAddBank(true)}>
+            <Text style={sc.addTxtSecondary}>+ Add Bank</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[sc.addBtn, isMobile && sc.addBtnMobile]} onPress={() => setShowAddAccount(true)}>
             <Text style={sc.addTxt}>+ Add Account</Text>
           </TouchableOpacity>
         </View>
+      </View>
+
+      {/* Categories management */}
+      <View style={sc.categoriesSection}>
+        <View style={sc.categoriesHeader}>
+          <Text style={sc.groupLabel}>📁 Categories</Text>
+          <TouchableOpacity onPress={() => setShowAddCategory(true)}>
+            <Text style={sc.newCategoryTxt}>+ New Category</Text>
+          </TouchableOpacity>
+        </View>
+        {categories.length === 0 ? (
+          <Text style={sc.emptyMsgSmall}>
+            No categories yet. Create one (e.g. "Credit Card") to define the fields its accounts will track.
+          </Text>
+        ) : (
+          <View style={cc.chipRow}>
+            {categories.map(cat => (
+              <CategoryChip
+                key={cat.id}
+                category={cat}
+                accountCount={categoryAccounts.filter(a => a.categoryId === cat.id).length}
+                onEdit={() => setEditingCategory(cat)}
+                onDelete={() => handleDeleteCategory(cat)}
+              />
+            ))}
+          </View>
+        )}
       </View>
 
       {/* Empty state */}
@@ -424,60 +645,99 @@ export default function AccountsScreen() {
           <Text style={sc.emptyIcon}>🏦</Text>
           <Text style={sc.emptyTitle}>No accounts yet</Text>
           <Text style={sc.emptyMsg}>
-            Add your first account to start tracking balances and amounts due with DARS.
+            Add a bank account, or create a category and add an account to it, to start tracking with DAR.
           </Text>
-          <TouchableOpacity style={sc.emptyBtn} onPress={() => setShowAdd(true)}>
+          <TouchableOpacity style={sc.emptyBtn} onPress={() => setShowAddBank(true)}>
             <Text style={sc.emptyBtnTxt}>Add Your First Account</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Account list — grouped: Banks → Credit Cards → Other */}
-      {(() => {
-        const banks = accounts.filter(a => BANK_TYPES.includes(a.type));
-        const credits = accounts.filter(a => CREDIT_TYPES.includes(a.type));
-        const others = accounts.filter(a => !BANK_TYPES.includes(a.type) && !CREDIT_TYPES.includes(a.type));
-        const groups = [
-          { label: '🏦 Banks', items: banks },
-          { label: '💳 Credit Cards', items: credits },
-          { label: '📂 Other', items: others },
-        ].filter(g => g.items.length > 0);
-        return groups.map(group => (
-          <View key={group.label} style={{ marginBottom: 8 }}>
-            <Text style={sc.groupLabel}>{group.label}</Text>
-            {group.items.map((account, idx) => (
+      {/* Account list — grouped: Banks → one group per category */}
+      {banks.length > 0 && (
+        <View style={{ marginBottom: 8 }}>
+          <Text style={sc.groupLabel}>🏦 Banks</Text>
+          {banks.map(account => (
+            <AccountCard
+              key={account.id}
+              account={account}
+              color={account.color || ACCT_COLORS[accounts.indexOf(account) % ACCT_COLORS.length]}
+              onEdit={() => setEditingAccount(account)}
+              onDelete={() => handleDelete(account)}
+              onLinkBank={() => handleLinkBank(account)}
+              isMobile={isMobile}
+            />
+          ))}
+        </View>
+      )}
+      {categories.map(category => {
+        const items = categoryAccounts.filter(a => a.categoryId === category.id);
+        if (items.length === 0) return null;
+        return (
+          <View key={category.id} style={{ marginBottom: 8 }}>
+            <Text style={sc.groupLabel}>{category.icon} {category.name}</Text>
+            {items.map(account => (
               <AccountCard
                 key={account.id}
                 account={account}
-                color={account.color || ACCT_COLORS[accounts.indexOf(account) % ACCT_COLORS.length]}
+                category={category}
+                color={account.color || category.color}
                 onEdit={() => setEditingAccount(account)}
                 onDelete={() => handleDelete(account)}
-                onLinkBank={() => handleLinkBank(account)}
                 isMobile={isMobile}
-                bankAccounts={banks}
               />
             ))}
           </View>
-        ));
-      })()}
+        );
+      })}
 
       {/* Modals */}
-      <AccountModal
-        visible={showAdd}
-        onClose={() => setShowAdd(false)}
-        onSave={handleAdd}
+      <BankAccountModal
+        visible={showAddBank}
+        onClose={() => setShowAddBank(false)}
+        onSave={handleAddBank}
         existing={null}
         isMobile={isMobile}
-        bankAccounts={accounts.filter(a => ['checking','savings'].includes(a.type))}
       />
-      {editingAccount && (
-        <AccountModal
+      <CategoryAccountModal
+        visible={showAddAccount}
+        onClose={() => setShowAddAccount(false)}
+        onSave={handleAddAccount}
+        existing={null}
+        isMobile={isMobile}
+        categories={categories}
+      />
+      <CategoryModal
+        visible={showAddCategory}
+        onClose={() => setShowAddCategory(false)}
+        onSave={handleSaveCategory}
+        existing={null}
+      />
+      {editingCategory && (
+        <CategoryModal
+          visible={true}
+          onClose={() => setEditingCategory(null)}
+          onSave={handleSaveCategory}
+          existing={editingCategory}
+        />
+      )}
+      {editingAccount && editingAccount.kind === 'bank' && (
+        <BankAccountModal
           visible={true}
           onClose={() => setEditingAccount(null)}
           onSave={handleEdit}
           existing={editingAccount}
           isMobile={isMobile}
-          bankAccounts={accounts.filter(a => ['checking','savings'].includes(a.type))}
+        />
+      )}
+      {editingAccount && editingAccount.kind === 'category' && (
+        <CategoryAccountModal
+          visible={true}
+          onClose={() => setEditingAccount(null)}
+          onSave={handleEdit}
+          existing={editingAccount}
+          isMobile={isMobile}
+          categories={categories}
         />
       )}
     </ScrollView>
@@ -489,15 +749,22 @@ const sc = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   content: { padding: 28, paddingBottom: 60 },
   contentMobile: { padding: 16, paddingBottom: 100 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
   headerMobile: { flexDirection: 'column', gap: 12 },
+  headerActions: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
   title: { fontSize: 28, fontWeight: '800', color: C.text },
   subtitle: { fontSize: 14, color: C.muted, marginTop: 4 },
   addBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 20, alignSelf: 'flex-start' },
   addBtnMobile: { alignSelf: 'stretch', alignItems: 'center' },
   addTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  addBtnSecondary: { borderWidth: 1, borderColor: C.primary, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignSelf: 'flex-start' },
+  addTxtSecondary: { color: C.primary, fontWeight: '600', fontSize: 14 },
   syncBtn: { borderWidth: 1, borderColor: C.primary, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignSelf: 'flex-start' },
   syncTxt: { color: C.primary, fontWeight: '600', fontSize: 14 },
+  categoriesSection: { marginBottom: 24, backgroundColor: C.card, borderRadius: 16, padding: 16 },
+  categoriesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  newCategoryTxt: { color: C.primary, fontWeight: '600', fontSize: 13 },
+  emptyMsgSmall: { fontSize: 13, color: C.muted, lineHeight: 19 },
   empty: { alignItems: 'center', paddingVertical: 80 },
   emptyIcon: { fontSize: 56, marginBottom: 16 },
   emptyTitle: { fontSize: 24, fontWeight: '700', color: C.text, marginBottom: 8 },
@@ -505,6 +772,19 @@ const sc = StyleSheet.create({
   emptyBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 28 },
   emptyBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 15 },
   groupLabel: { fontSize: 13, fontWeight: '700', color: C.muted, marginBottom: 8, marginTop: 4, letterSpacing: 0.5, textTransform: 'uppercase' },
+});
+
+const cc = StyleSheet.create({
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
+    backgroundColor: '#FAFAFA',
+  },
+  chipIcon: { fontSize: 15 },
+  chipName: { fontSize: 13, fontWeight: '700' },
+  chipCount: { fontSize: 11, color: C.faint, fontWeight: '600' },
+  chipAction: { fontSize: 12, marginLeft: 2 },
 });
 
 const c = StyleSheet.create({
@@ -518,7 +798,7 @@ const c = StyleSheet.create({
   icon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   iconTxt: { fontSize: 22 },
   name: { fontSize: 17, fontWeight: '700', color: C.text },
-  type: { fontSize: 13, color: C.faint, marginTop: 2, textTransform: 'capitalize' },
+  type: { fontSize: 13, color: C.faint, marginTop: 2 },
   fields: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   fieldChip: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
   fieldChipTxt: { fontSize: 12, fontWeight: '500' },
@@ -532,7 +812,6 @@ const c = StyleSheet.create({
   editTxt: { fontSize: 13, color: C.primary, fontWeight: '600' },
   delBtn: { borderWidth: 1, borderColor: '#FEE2E2', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#FEF2F2' },
   delTxt: { fontSize: 13, color: C.bills, fontWeight: '600' },
-  drawsFrom: { fontSize: 11, color: C.faint, marginTop: 4, fontStyle: 'italic' },
 });
 
 const m = StyleSheet.create({
@@ -569,8 +848,6 @@ const m = StyleSheet.create({
   ftTxtActive: { color: C.primary, fontWeight: '600' },
   addFieldBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   addFieldTxt: { color: '#fff', fontWeight: '600', fontSize: 14 },
-  suggestBtn: { borderWidth: 1, borderColor: C.primary, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 8 },
-  suggestTxt: { color: C.primary, fontWeight: '500', fontSize: 14 },
   btnRow: { flexDirection: 'row', gap: 12, marginTop: 24 },
   cancelBtn: { flex: 1, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
   cancelTxt: { fontSize: 15, color: C.muted, fontWeight: '500' },

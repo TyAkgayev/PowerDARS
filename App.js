@@ -6,7 +6,7 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import Sidebar from './src/components/Sidebar';
 import BottomTabBar from './src/components/BottomTabBar';
 import DashboardScreen from './src/screens/DashboardScreen';
-import DARSScreen from './src/screens/DARSScreen';
+import DARScreen from './src/screens/DARScreen';
 import AccountsScreen from './src/screens/AccountsScreen';
 import CarScreen from './src/screens/CarScreen';
 import RNScreen from './src/screens/RNScreen';
@@ -50,7 +50,7 @@ function MainApp() {
 
   const renderScreen = () => {
     switch (currentScreen) {
-      case 'dars':     return <DARSScreen />;
+      case 'dar':      return <DARScreen />;
       case 'accounts': return <AccountsScreen />;
       case 'car':      return <CarScreen />;
       case 'rn':       return <RNScreen />;

@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 
 const NAV = [
   { id: 'dashboard', label: 'Dash',     icon: '🏠' },
-  { id: 'dars',      label: 'DARS',     icon: '📋' },
+  { id: 'dar',       label: 'DAR',      icon: '📋' },
   { id: 'accounts',  label: 'Accounts', icon: '🏦' },
   { id: 'car',       label: 'Car',      icon: '🚗' },
   { id: 'rn',        label: 'RN',       icon: '🏥' },

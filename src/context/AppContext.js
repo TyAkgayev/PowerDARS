@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { db } from '../config/firebase';
 import { useAuth } from './AuthContext';
 import {
@@ -59,7 +59,8 @@ export function AppProvider({ children }) {
   const [plaidLinkedIds, setPlaidLinkedIds] = useState(new Set());
   const [plaidBalances, setPlaidBalances] = useState({});
   const [creditSchedule, setCreditSchedule] = useState({});
-  const darsRedirectChecked = useRef(false);
+  const [categories, setCategories] = useState([]);
+  const [accountReports, setAccountReports] = useState({});
 
   // Accounts listener
   useEffect(() => {
@@ -71,6 +72,31 @@ export function AppProvider({ children }) {
       setLoading(false);
       if (accs.length === 0) setCurrentScreen('accounts');
     }, () => setLoading(false));
+    return unsub;
+  }, [uid]);
+
+  // Categories listener — field templates shared by every account of that
+  // category (see addCategory below).
+  useEffect(() => {
+    if (!uid) return;
+    const q = query(uCol('categories'), orderBy('order', 'asc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, [uid]);
+
+  // Account reports listener — the "latest known state" doc per account that
+  // a future daily agent will write field values into (see the Car screen's
+  // licenseStatus/insuranceStatus agents for the same pattern). Nothing
+  // writes here yet; the DAR screen just reads whatever's present.
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = onSnapshot(uCol('accountReports'), (snap) => {
+      const reports = {};
+      snap.docs.forEach(d => { reports[d.id] = { id: d.id, ...d.data() }; });
+      setAccountReports(reports);
+    });
     return unsub;
   }, [uid]);
 
@@ -93,7 +119,9 @@ export function AppProvider({ children }) {
     return unsub;
   }, [uid]);
 
-  // DARS history listener
+  // Bank balance history listener — the old monthly "dars" collection now
+  // only holds bank balances (via updateBankBalance below), used for the
+  // Dashboard's balance sparklines.
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(uCol('dars'), (snap) => {
@@ -225,35 +253,9 @@ export function AppProvider({ children }) {
     return unsub;
   }, [uid]);
 
-  // Accounts no longer have due dates — every payment is scheduled manually,
-  // so strip any leftover due-day fields from older accounts.
+  // Reset the visible screen whenever the signed-in user changes, so
+  // switching accounts doesn't leave you on a screen from the last session.
   useEffect(() => {
-    if (!uid) return;
-    accounts.forEach(acc => {
-      if ((acc.fields || []).some(f => f.type === 'date')) {
-        updateDoc(uDoc('accounts', acc.id), {
-          fields: acc.fields.filter(f => f.type !== 'date'),
-        });
-      }
-    });
-  }, [uid, accounts]);
-
-  // DARS is filled out once a month now (not daily) — send the user there
-  // on the first login of a new month if this month's sheet isn't done yet.
-  // Bank balances can be updated from the dashboard at any time and merge into
-  // this same month's doc without setting submittedAt, so submittedAt (not mere
-  // doc existence) is what tracks whether the monthly DARS itself is done.
-  useEffect(() => {
-    if (loading || darsRedirectChecked.current) return;
-    if (accounts.length === 0) return;
-    darsRedirectChecked.current = true;
-    if (!darsHistory[currentMonthStr()]?.submittedAt) setCurrentScreen('dars');
-  }, [loading, accounts, darsHistory]);
-
-  // Reset per-account UI state (and re-arm the DARS redirect check) whenever
-  // the signed-in user changes, so switching accounts doesn't leak state.
-  useEffect(() => {
-    darsRedirectChecked.current = false;
     setCurrentScreen('dashboard');
   }, [uid]);
 
@@ -272,6 +274,26 @@ export function AppProvider({ children }) {
 
   const deleteAccount = useCallback(async (id) => {
     await deleteDoc(uDoc('accounts', id));
+  }, [uid]);
+
+  // — Categories — a category is a reusable field template (e.g. "Credit
+  // Card" -> Balance, Amount Due, APR, ...); accounts pick a category
+  // instead of defining their own fields, so every account of that category
+  // shares a schema a future daily agent can populate.
+  const addCategory = useCallback(async (data) => {
+    await addDoc(uCol('categories'), {
+      ...data,
+      order: categories.length,
+      createdAt: serverTimestamp(),
+    });
+  }, [uid, categories.length]);
+
+  const updateCategory = useCallback(async (id, updates) => {
+    await updateDoc(uDoc('categories', id), updates);
+  }, [uid]);
+
+  const deleteCategory = useCallback(async (id) => {
+    await deleteDoc(uDoc('categories', id));
   }, [uid]);
 
   // — Bills —
@@ -330,24 +352,9 @@ export function AppProvider({ children }) {
     await deleteDoc(uDoc('workSchedule', dateStr));
   }, [uid]);
 
-  // — DARS — filled out once per month, keyed by "YYYY-MM". Defaults to the
-  // current month but can target any month, so next month's bills can be
-  // planned ahead of time from within DARS.
-  const saveDars = useCallback(async (entries, monthStr) => {
-    const date = monthStr || currentMonthStr();
-    await setDoc(uDoc('dars', date), {
-      date,
-      entries,
-      submittedAt: serverTimestamp(),
-    });
-  }, [uid]);
-
-  const getCurrentMonthDars = useCallback(() => darsHistory[currentMonthStr()] || null, [darsHistory]);
-
-  // Bank balances are edited straight from the dashboard rather than through
-  // the monthly DARS form. This merges into the same month's dars doc (so
-  // history/sparklines keep working) but never touches submittedAt, which is
-  // what marks the monthly DARS itself as done.
+  // Bank balances are edited straight from the dashboard. This merges into
+  // the current month's dars doc (kept only for bank-balance history/
+  // sparklines now that the monthly DARS sheet itself is gone).
   const updateBankBalance = useCallback(async (accountId, fieldId, value) => {
     const date = currentMonthStr();
     await setDoc(uDoc('dars', date), {
@@ -404,9 +411,11 @@ export function AppProvider({ children }) {
       currentScreen, setCurrentScreen,
       userName, saveUserName, savePhoneNumber,
       addAccount, updateAccount, deleteAccount,
+      categories, addCategory, updateCategory, deleteCategory,
+      accountReports,
       addBill, updateBill, deleteBill,
       addTask, toggleTask, deleteTask,
-      saveDars, getCurrentMonthDars, updateBankBalance,
+      updateBankBalance,
       cars, addCar, updateCar, deleteCar,
       licenseCheck,
       insuranceCheck,

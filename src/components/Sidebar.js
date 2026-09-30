@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
-  { id: 'dars',      label: 'DARS',      icon: '📋' },
+  { id: 'dar',       label: 'DAR',       icon: '📋' },
   { id: 'accounts',  label: 'Accounts',  icon: '🏦' },
   { id: 'car',       label: 'Car',        icon: '🚗' },
   { id: 'rn',        label: 'RN License', icon: '🏥' },
