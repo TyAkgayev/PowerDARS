@@ -55,6 +55,7 @@ const FIELD_TYPES = [
   { id: 'number',   label: 'Number' },
   { id: 'text',     label: 'Text' },
   { id: 'percent',  label: 'Percentage (%)' },
+  { id: 'date',     label: 'Date' },
 ];
 
 const PALETTE = ['#3B82F6','#A855F7','#F59E0B','#22C55E','#EF4444','#06B6D4','#EC4899','#8B5CF6'];

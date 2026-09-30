@@ -45,7 +45,20 @@ function fmtFieldValue(field, value) {
     const n = parseFloat(value);
     return isNaN(n) ? String(value) : `${n}%`;
   }
+  if (field.type === 'date') {
+    return fmtDate(value);
+  }
   return String(value);
+}
+
+// "2027-03-10" -> "03-10-27". Plain string manipulation (not Date parsing) so
+// there's no UTC-vs-local timezone shift risk; falls back to the raw value if
+// it isn't ISO YYYY-MM-DD (e.g. an agent or manual entry wrote something else).
+function fmtDate(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+  if (!m) return String(value);
+  const [, yyyy, mm, dd] = m;
+  return `${mm}-${dd}-${yyyy.slice(2)}`;
 }
 
 // ─── Account Tile ───────────────────────────────────────────────────────────
