@@ -22,6 +22,7 @@ const cors = require('cors')({ origin: true });
 const { admin, db, requireUser } = require('../lib/common');
 const {
   createBrowserUseRun, pollBrowserUseRunOnce, runBrowserUseTaskToCompletion,
+  withSelfAssessment, extractSelfAssessment,
 } = require('../lib/browserUseClient');
 
 const BESTBUY_USERNAME    = defineSecret('BESTBUY_USERNAME');
@@ -63,13 +64,13 @@ function parseBestBuyResult(resultText, fields) {
     const parsed = JSON.parse(resultText);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       fields.forEach(f => { values[f.id] = parsed[f.id] ?? null; });
-      return values;
+      return { values, ...extractSelfAssessment(parsed) };
     }
   } catch {
     // fall through
   }
   fields.forEach(f => { values[f.id] = null; });
-  return values;
+  return { values, success: false, summary: 'Agent did not return valid JSON.' };
 }
 
 // Finds the Best Buy account and its category's field list. Throws with a
@@ -100,19 +101,21 @@ async function checkAndStoreBestBuy(uid, apiKey, username, password) {
   const { accountId, fields } = await findBestBuyAccountAndFields(uid);
   const docRef = db.collection('users').doc(uid).collection('accountReports').doc(accountId);
   const secretBindings = bestBuySecretBindings(username, password);
+  const prompt = withSelfAssessment(buildBestBuyTask(fields));
   try {
     const resultText = await runBrowserUseTaskToCompletion(
-      apiKey, buildBestBuyTask(fields), secretBindings, 10 * 60 * 1000, BESTBUY_BROWSER_SETTINGS
+      apiKey, prompt, secretBindings, 10 * 60 * 1000, BESTBUY_BROWSER_SETTINGS
     );
-    const values = parseBestBuyResult(resultText, fields);
+    const { values, success, summary } = parseBestBuyResult(resultText, fields);
     await docRef.set({
-      accountId, values, status: 'completed', error: null,
+      accountId, values, success, summary, prompt, rawResult: resultText, status: 'completed', error: null,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return { accountId, values, status: 'completed' };
   } catch (err) {
     await docRef.set({
-      accountId, values: {}, status: 'failed', error: err.message,
+      accountId, values: {}, success: false, summary: null, prompt, rawResult: null,
+      status: 'failed', error: err.message,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
     throw err;
@@ -131,11 +134,12 @@ exports.checkBestBuyStatus = onRequest(
         const uid = await requireUser(req);
         const { accountId, fields } = await findBestBuyAccountAndFields(uid);
         const secretBindings = bestBuySecretBindings(BESTBUY_USERNAME.value(), BESTBUY_PASSWORD.value());
+        const prompt = withSelfAssessment(buildBestBuyTask(fields));
         const runId = await createBrowserUseRun(
-          BROWSER_USE_API_KEY.value(), buildBestBuyTask(fields), secretBindings, BESTBUY_BROWSER_SETTINGS
+          BROWSER_USE_API_KEY.value(), prompt, secretBindings, BESTBUY_BROWSER_SETTINGS
         );
         await db.collection('users').doc(uid).collection('accountReports').doc(accountId).set({
-          accountId, runId, status: 'running', values: {}, error: null,
+          accountId, runId, prompt, rawResult: null, status: 'running', values: {}, success: null, summary: null, error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         res.json({ runId, accountId, status: 'running' });
@@ -170,15 +174,16 @@ exports.pollBestBuyStatus = onRequest(
 
         if (!result.ok) {
           await docRef.set({
-            accountId, values: {}, status: 'failed', error: result.error,
+            accountId, values: {}, success: false, summary: null, rawResult: null,
+            status: 'failed', error: result.error,
             checkedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           return res.json({ status: 'failed', error: result.error });
         }
 
-        const values = parseBestBuyResult(result.resultText, fields);
+        const { values, success, summary } = parseBestBuyResult(result.resultText, fields);
         await docRef.set({
-          accountId, values, status: 'completed', error: null,
+          accountId, values, success, summary, rawResult: result.resultText, status: 'completed', error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         res.json({ status: 'completed', accountId, values });

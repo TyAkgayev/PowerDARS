@@ -9,6 +9,7 @@ const NAV = [
   { id: 'rn',        label: 'RN',       icon: '🏥' },
   { id: 'work',      label: 'Work',     icon: '💼' },
   { id: 'spending',  label: 'Spend',    icon: '💳' },
+  { id: 'agents',    label: 'Agents',   icon: '🤖' },
 ];
 
 export default function BottomTabBar({ currentScreen, onNavigate }) {

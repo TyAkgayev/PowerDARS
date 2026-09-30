@@ -15,6 +15,7 @@ const cors = require('cors')({ origin: true });
 const { admin, db, requireUser } = require('../lib/common');
 const {
   createBrowserUseRun, pollBrowserUseRunOnce, runBrowserUseTaskToCompletion,
+  withSelfAssessment, extractSelfAssessment,
 } = require('../lib/browserUseClient');
 
 const GEICO_USERNAME      = defineSecret('GEICO_USERNAME');
@@ -41,18 +42,18 @@ function buildGeicoCheckTask() {
   );
 }
 
-const EMPTY_GEICO_RESULT = { insuranceStatus: null };
+const EMPTY_GEICO_RESULT = { insuranceStatus: null, success: null, summary: null };
 
 function parseGeicoCheckResult(resultText) {
   try {
     const parsed = JSON.parse(resultText);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return { insuranceStatus: parsed.insuranceStatus ?? null };
+      return { insuranceStatus: parsed.insuranceStatus ?? null, ...extractSelfAssessment(parsed) };
     }
   } catch {
     // fall through
   }
-  return EMPTY_GEICO_RESULT;
+  return { ...EMPTY_GEICO_RESULT, success: false, summary: 'Agent did not return valid JSON.' };
 }
 
 function geicoSecretBindings(geicoUsername, geicoPassword) {
@@ -66,20 +67,22 @@ function geicoSecretBindings(geicoUsername, geicoPassword) {
 // it's fine to block until the run finishes.
 async function checkAndStoreInsuranceStatus(uid, apiKey, geicoUsername, geicoPassword) {
   const secretBindings = geicoSecretBindings(geicoUsername, geicoPassword);
+  const prompt = withSelfAssessment(buildGeicoCheckTask());
   const docRef = db.collection('users').doc(uid).collection('insuranceStatus').doc('latest');
   try {
     const resultText = await runBrowserUseTaskToCompletion(
-      apiKey, buildGeicoCheckTask(), secretBindings, 10 * 60 * 1000, GEICO_BROWSER_SETTINGS
+      apiKey, prompt, secretBindings, 10 * 60 * 1000, GEICO_BROWSER_SETTINGS
     );
     const geico = parseGeicoCheckResult(resultText);
     await docRef.set({
-      ...geico, status: 'completed', error: null,
+      ...geico, prompt, rawResult: resultText, status: 'completed', error: null,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return { ...geico, status: 'completed' };
   } catch (err) {
     await docRef.set({
       ...EMPTY_GEICO_RESULT,
+      prompt, rawResult: null,
       status: 'failed',
       error: err.message,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -99,11 +102,12 @@ exports.checkInsuranceStatus = onRequest(
       try {
         const uid = await requireUser(req);
         const secretBindings = geicoSecretBindings(GEICO_USERNAME.value(), GEICO_PASSWORD.value());
+        const prompt = withSelfAssessment(buildGeicoCheckTask());
         const runId = await createBrowserUseRun(
-          BROWSER_USE_API_KEY.value(), buildGeicoCheckTask(), secretBindings, GEICO_BROWSER_SETTINGS
+          BROWSER_USE_API_KEY.value(), prompt, secretBindings, GEICO_BROWSER_SETTINGS
         );
         await db.collection('users').doc(uid).collection('insuranceStatus').doc('latest').set({
-          runId, status: 'running', ...EMPTY_GEICO_RESULT, error: null,
+          runId, prompt, rawResult: null, status: 'running', ...EMPTY_GEICO_RESULT, error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         res.json({ runId, status: 'running' });
@@ -137,7 +141,7 @@ exports.pollInsuranceStatus = onRequest(
 
         if (!result.ok) {
           await docRef.set({
-            ...EMPTY_GEICO_RESULT, status: 'failed', error: result.error,
+            ...EMPTY_GEICO_RESULT, rawResult: null, status: 'failed', error: result.error,
             checkedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           return res.json({ status: 'failed', error: result.error });
@@ -145,7 +149,7 @@ exports.pollInsuranceStatus = onRequest(
 
         const geico = parseGeicoCheckResult(result.resultText);
         await docRef.set({
-          ...geico, status: 'completed', error: null,
+          ...geico, rawResult: result.resultText, status: 'completed', error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         res.json({ status: 'completed', ...geico });

@@ -12,6 +12,7 @@ const NAV = [
   { id: 'rn',        label: 'RN License', icon: '🏥' },
   { id: 'work',      label: 'Work',       icon: '💼' },
   { id: 'spending',  label: 'Spending',   icon: '💳' },
+  { id: 'agents',    label: 'Agents',     icon: '🤖' },
 ];
 
 const FALLBACK = { text: 'Small steps today create peace tomorrow.', author: null };

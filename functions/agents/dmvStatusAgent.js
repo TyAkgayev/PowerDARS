@@ -20,6 +20,7 @@ const cors = require('cors')({ origin: true });
 const { admin, db, requireUser } = require('../lib/common');
 const {
   createBrowserUseRun, pollBrowserUseRunOnce, runBrowserUseTaskToCompletion,
+  withSelfAssessment, extractSelfAssessment,
 } = require('../lib/browserUseClient');
 
 const NYGOV_USERNAME      = defineSecret('NYGOV_USERNAME');
@@ -64,6 +65,7 @@ function buildDMVCheckTask() {
 
 const EMPTY_DMV_RESULT = {
   licenseStatus: null, registrationStatus: null, registrationExpiration: null, licensePoints: null, tickets: [],
+  success: null, summary: null,
 };
 
 function parseDMVCheckResult(resultText) {
@@ -76,13 +78,14 @@ function parseDMVCheckResult(resultText) {
         registrationExpiration: parsed.registrationExpiration ?? null,
         licensePoints: typeof parsed.licensePoints === 'number' ? parsed.licensePoints : (parsed.licensePoints ?? null),
         tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
+        ...extractSelfAssessment(parsed),
       };
     }
   } catch {
     // fall through
   }
   // Agent didn't return clean JSON; surface the raw text rather than silently losing it.
-  return { ...EMPTY_DMV_RESULT, tickets: [{ raw: resultText }] };
+  return { ...EMPTY_DMV_RESULT, tickets: [{ raw: resultText }], success: false, summary: 'Agent did not return valid JSON.' };
 }
 
 function nygovSecretBindings(nygovUsername, nygovPassword) {
@@ -96,20 +99,22 @@ function nygovSecretBindings(nygovUsername, nygovPassword) {
 // it's fine to block until the run finishes.
 async function checkAndStoreLicenseStatus(uid, apiKey, nygovUsername, nygovPassword) {
   const secretBindings = nygovSecretBindings(nygovUsername, nygovPassword);
+  const prompt = withSelfAssessment(buildDMVCheckTask());
   const docRef = db.collection('users').doc(uid).collection('licenseStatus').doc('latest');
   try {
     const resultText = await runBrowserUseTaskToCompletion(
-      apiKey, buildDMVCheckTask(), secretBindings, 15 * 60 * 1000, DMV_BROWSER_SETTINGS
+      apiKey, prompt, secretBindings, 15 * 60 * 1000, DMV_BROWSER_SETTINGS
     );
     const dmv = parseDMVCheckResult(resultText);
     await docRef.set({
-      ...dmv, status: 'completed', error: null,
+      ...dmv, prompt, rawResult: resultText, status: 'completed', error: null,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return { ...dmv, status: 'completed' };
   } catch (err) {
     await docRef.set({
       ...EMPTY_DMV_RESULT,
+      prompt, rawResult: null,
       status: 'failed',
       error: err.message,
       checkedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -129,11 +134,12 @@ exports.checkLicenseStatus = onRequest(
       try {
         const uid = await requireUser(req);
         const secretBindings = nygovSecretBindings(NYGOV_USERNAME.value(), NYGOV_PASSWORD.value());
+        const prompt = withSelfAssessment(buildDMVCheckTask());
         const runId = await createBrowserUseRun(
-          BROWSER_USE_API_KEY.value(), buildDMVCheckTask(), secretBindings, DMV_BROWSER_SETTINGS
+          BROWSER_USE_API_KEY.value(), prompt, secretBindings, DMV_BROWSER_SETTINGS
         );
         await db.collection('users').doc(uid).collection('licenseStatus').doc('latest').set({
-          runId, status: 'running', ...EMPTY_DMV_RESULT, error: null,
+          runId, prompt, rawResult: null, status: 'running', ...EMPTY_DMV_RESULT, error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         res.json({ runId, status: 'running' });
@@ -167,7 +173,7 @@ exports.pollLicenseStatus = onRequest(
 
         if (!result.ok) {
           await docRef.set({
-            ...EMPTY_DMV_RESULT, status: 'failed', error: result.error,
+            ...EMPTY_DMV_RESULT, rawResult: null, status: 'failed', error: result.error,
             checkedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           return res.json({ status: 'failed', error: result.error });
@@ -175,7 +181,7 @@ exports.pollLicenseStatus = onRequest(
 
         const dmv = parseDMVCheckResult(result.resultText);
         await docRef.set({
-          ...dmv, status: 'completed', error: null,
+          ...dmv, rawResult: result.resultText, status: 'completed', error: null,
           checkedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         res.json({ status: 'completed', ...dmv });

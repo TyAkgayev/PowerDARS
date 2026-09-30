@@ -12,6 +12,7 @@ import CarScreen from './src/screens/CarScreen';
 import RNScreen from './src/screens/RNScreen';
 import WorkScreen from './src/screens/WorkScreen';
 import SpendingScreen from './src/screens/SpendingScreen';
+import AgentsScreen from './src/screens/AgentsScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import { usePlaidLink } from './src/hooks/usePlaidLink';
 import { listenForForegroundMessages } from './src/utils/pushNotifications';
@@ -56,6 +57,7 @@ function MainApp() {
       case 'rn':       return <RNScreen />;
       case 'work':     return <WorkScreen />;
       case 'spending': return <SpendingScreen />;
+      case 'agents':   return <AgentsScreen />;
       default:         return <DashboardScreen />;
     }
   };
