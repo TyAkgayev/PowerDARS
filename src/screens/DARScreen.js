@@ -188,7 +188,7 @@ function computeCreditCardStatus(fields, values) {
 }
 
 const CREDIT_STATUS_META = {
-  current:  { label: 'Current',  color: '#22C55E' },
+  current:  { label: 'Current',  color: '#15803D' },
   past_due: { label: 'Past Due', color: '#EF4444' },
   unknown:  { label: 'Unknown',  color: C.faint },
 };
@@ -247,9 +247,9 @@ function GenericAccountTile({ account, category, report, onRefresh, refreshing }
   );
 }
 
-// Concise credit-card tile: Current/Past Due at a glance, then just balance,
-// amount due, and due date — everything else from the category collapses
-// behind a "More details" toggle instead of listing every field up front.
+// Concise credit-card tile: Current/Past Due at a glance plus amount due and
+// due date; balance and everything else from the category collapses behind a
+// "More details" toggle instead of listing every field up front.
 function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
   const [expanded, setExpanded] = useState(false);
   const fields = category?.fields || [];
@@ -260,11 +260,6 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
   const balanceField = findFieldByPatterns(fields, BALANCE_PATTERNS, 'currency');
   const amountDueField = findFieldByPatterns(fields, AMOUNT_DUE_PATTERNS, 'currency');
   const dueDateField = findFieldByPatterns(fields, DUE_DATE_PATTERNS, 'date');
-  const highlightFields = [
-    { field: balanceField, fallbackLabel: 'Balance' },
-    { field: amountDueField, fallbackLabel: 'Amount Due' },
-    { field: dueDateField, fallbackLabel: 'Due Date' },
-  ];
   const highlightIds = new Set([balanceField, amountDueField, dueDateField].filter(Boolean).map(f => f.id));
   const otherFields = fields.filter(f => !highlightIds.has(f.id));
 
@@ -289,19 +284,32 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
           <Text style={[t.ccStatusTxt, { color: statusMeta.color }]}>{statusMeta.label}</Text>
         </View>
 
-        <Text style={t.moreToggleTxt}>{expanded ? 'Hide details ▲' : 'Details ▼'}</Text>
+        <View style={t.ccTileFields}>
+          <View style={t.fieldRow}>
+            <Text style={t.ccFieldLabel}>{amountDueField?.label || 'Amount Due'}</Text>
+            <Text style={[t.ccFieldValue, !amountDueField && t.fieldValuePlaceholder]}>
+              {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
+            </Text>
+          </View>
+          <View style={t.fieldRow}>
+            <Text style={t.ccFieldLabel}>{dueDateField?.label || 'Due Date'}</Text>
+            <Text style={[t.ccFieldValue, !dueDateField && t.fieldValuePlaceholder]}>
+              {dueDateField ? (fmtFieldValue(dueDateField, values[dueDateField.id]) ?? '—') : 'N/A'}
+            </Text>
+          </View>
+        </View>
+
+        <Text style={t.moreToggleTxt}>{expanded ? 'Hide details ▲' : 'More details ▼'}</Text>
       </TouchableOpacity>
 
       {expanded && (
         <View style={[t.ccTileFields, { marginTop: 8 }]}>
-          {highlightFields.map(({ field, fallbackLabel }) => (
-            <View key={fallbackLabel} style={t.fieldRow}>
-              <Text style={t.ccFieldLabel}>{field?.label || fallbackLabel}</Text>
-              <Text style={[t.ccFieldValue, !field && t.fieldValuePlaceholder]}>
-                {field ? (fmtFieldValue(field, values[field.id]) ?? '—') : 'N/A'}
-              </Text>
+          {balanceField && (
+            <View style={t.fieldRow}>
+              <Text style={t.ccFieldLabel}>{balanceField.label}</Text>
+              <Text style={t.ccFieldValue}>{fmtFieldValue(balanceField, values[balanceField.id]) ?? '—'}</Text>
             </View>
-          ))}
+          )}
           {otherFields.map(field => {
             const display = fmtFieldValue(field, values[field.id]);
             return (
