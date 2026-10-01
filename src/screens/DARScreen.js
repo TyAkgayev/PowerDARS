@@ -81,17 +81,27 @@ function fmtCheckedAt(checkedAt) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+// Agents sometimes return currency/percent values pre-formatted (e.g. "$29.00",
+// "1,234.56") since that's how the number actually appears on the page they're
+// reading, instead of a clean number. Strip everything but digits/sign/decimal
+// before parsing so a stray "$" or "," doesn't turn into NaN downstream.
+function parseNumericValue(value) {
+  if (value === undefined || value === null || value === '') return NaN;
+  if (typeof value === 'number') return value;
+  return parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+}
+
 function fmtFieldValue(field, value) {
   if (value === undefined || value === null || value === '') return null;
   if (field.type === 'currency') {
-    const n = parseFloat(value);
+    const n = parseNumericValue(value);
     if (isNaN(n)) return String(value);
     return n < 0
       ? `-$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
       : `$${n.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
   }
   if (field.type === 'percent') {
-    const n = parseFloat(value);
+    const n = parseNumericValue(value);
     return isNaN(n) ? String(value) : `${n}%`;
   }
   if (field.type === 'date') {
@@ -127,10 +137,13 @@ function findFieldByPatterns(fields, patterns, type) {
 
 const BALANCE_PATTERNS = [/available\s*balance/i, /^balance$/i, /\bbalance\b/i];
 const AMOUNT_DUE_PATTERNS = [/amount\s*due/i, /minimum\s*due/i, /payment\s*due\s*amount/i];
-const DUE_DATE_PATTERNS = [/next\s*payment\s*date/i, /payment\s*due\s*date/i, /due\s*date/i];
+const DUE_DATE_PATTERNS = [
+  /next\s*payment\s*date/i, /payment\s*due\s*date/i, /due\s*date/i, /date\s*due/i,
+];
 const LAST_PAYMENT_DATE_PATTERNS = [
   /last\s*payment\s*date/i, /last\s*paid\s*date/i, /date\s*of\s*last\s*payment/i,
   /previous\s*payment\s*date/i, /last\s*pay(ment)?\b.*date/i,
+  /date\s*last\s*paid/i, /date\s*last\s*payment/i,
 ];
 const BILLING_CYCLE_DAYS = 35; // ~one month, with slack for a late-posting payment
 
@@ -156,7 +169,7 @@ function computeCreditCardStatus(fields, values) {
   if (!dueDateField || !amountDueField || !lastPaymentDateField) return null;
 
   const dueDate = parseIsoDate(values?.[dueDateField.id]);
-  const amountDue = parseFloat(values?.[amountDueField.id]);
+  const amountDue = parseNumericValue(values?.[amountDueField.id]);
   const lastPaymentDate = parseIsoDate(values?.[lastPaymentDateField.id]);
   if (!dueDate || isNaN(amountDue) || !lastPaymentDate) return null;
 
