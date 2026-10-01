@@ -128,7 +128,10 @@ function findFieldByPatterns(fields, patterns, type) {
 const BALANCE_PATTERNS = [/available\s*balance/i, /^balance$/i, /\bbalance\b/i];
 const AMOUNT_DUE_PATTERNS = [/amount\s*due/i, /minimum\s*due/i, /payment\s*due\s*amount/i];
 const DUE_DATE_PATTERNS = [/next\s*payment\s*date/i, /payment\s*due\s*date/i, /due\s*date/i];
-const LAST_PAYMENT_DATE_PATTERNS = [/last\s*payment\s*date/i];
+const LAST_PAYMENT_DATE_PATTERNS = [
+  /last\s*payment\s*date/i, /last\s*paid\s*date/i, /date\s*of\s*last\s*payment/i,
+  /previous\s*payment\s*date/i, /last\s*pay(ment)?\b.*date/i,
+];
 const BILLING_CYCLE_DAYS = 35; // ~one month, with slack for a late-posting payment
 
 // Parses "YYYY-MM-DD" into a local-midnight Date, or null — string parsing
@@ -244,6 +247,11 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
   const balanceField = findFieldByPatterns(fields, BALANCE_PATTERNS, 'currency');
   const amountDueField = findFieldByPatterns(fields, AMOUNT_DUE_PATTERNS, 'currency');
   const dueDateField = findFieldByPatterns(fields, DUE_DATE_PATTERNS, 'date');
+  const highlightFields = [
+    { field: balanceField, fallbackLabel: 'Balance' },
+    { field: amountDueField, fallbackLabel: 'Amount Due' },
+    { field: dueDateField, fallbackLabel: 'Due Date' },
+  ];
   const highlightIds = new Set([balanceField, amountDueField, dueDateField].filter(Boolean).map(f => f.id));
   const otherFields = fields.filter(f => !highlightIds.has(f.id));
 
@@ -256,47 +264,31 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
       t.tile, t.ccTile,
       tinted && { borderColor: statusMeta.color, backgroundColor: `${statusMeta.color}14` },
     ]}>
-      <View style={[t.tileHeader, t.ccTileHeader]}>
-        <View style={[t.tileIcon, { backgroundColor: `${accentColor}20` }]}>
-          <Text style={t.tileIconTxt}>{account.icon || category?.icon || '💳'}</Text>
+      <TouchableOpacity onPress={() => setExpanded(e => !e)} activeOpacity={0.7}>
+        <View style={[t.tileHeader, t.ccTileHeader]}>
+          <View style={[t.tileIcon, t.ccTileIcon, { backgroundColor: `${accentColor}20` }]}>
+            <Text style={[t.tileIconTxt, t.ccTileIconTxt]}>{account.icon || category?.icon || '💳'}</Text>
+          </View>
+          <Text style={[t.tileName, t.ccTileName]} numberOfLines={1}>{account.name}</Text>
         </View>
-        <Text style={t.tileName} numberOfLines={1}>{account.name}</Text>
-      </View>
 
-      <View style={[t.ccStatusBadge, { backgroundColor: `${statusMeta.color}20`, borderColor: statusMeta.color }]}>
-        <Text style={[t.ccStatusTxt, { color: statusMeta.color }]}>{statusMeta.label}</Text>
-      </View>
+        <View style={[t.ccStatusBadge, { backgroundColor: `${statusMeta.color}20`, borderColor: statusMeta.color }]}>
+          <Text style={[t.ccStatusTxt, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+        </View>
 
-      <View style={t.ccTileFields}>
-        <View style={t.fieldRow}>
-          <Text style={t.ccFieldLabel}>{balanceField?.label || 'Balance'}</Text>
-          <Text style={[t.ccFieldValue, !balanceField && t.fieldValuePlaceholder]}>
-            {balanceField ? (fmtFieldValue(balanceField, values[balanceField.id]) ?? '—') : 'N/A'}
-          </Text>
-        </View>
-        <View style={t.fieldRow}>
-          <Text style={t.ccFieldLabel}>{amountDueField?.label || 'Amount Due'}</Text>
-          <Text style={[t.ccFieldValue, !amountDueField && t.fieldValuePlaceholder]}>
-            {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
-          </Text>
-        </View>
-        <View style={t.fieldRow}>
-          <Text style={t.ccFieldLabel}>{dueDateField?.label || 'Due Date'}</Text>
-          <Text style={[t.ccFieldValue, !dueDateField && t.fieldValuePlaceholder]}>
-            {dueDateField ? (fmtFieldValue(dueDateField, values[dueDateField.id]) ?? '—') : 'N/A'}
-          </Text>
-        </View>
-      </View>
+        <Text style={t.moreToggleTxt}>{expanded ? 'Hide details ▲' : 'Details ▼'}</Text>
+      </TouchableOpacity>
 
-      {otherFields.length > 0 && (
-        <TouchableOpacity onPress={() => setExpanded(e => !e)} style={t.moreToggle}>
-          <Text style={t.moreToggleTxt}>
-            {expanded ? 'Hide details ▲' : `More details (${otherFields.length}) ▼`}
-          </Text>
-        </TouchableOpacity>
-      )}
       {expanded && (
-        <View style={[t.ccTileFields, { marginTop: 6 }]}>
+        <View style={[t.ccTileFields, { marginTop: 8 }]}>
+          {highlightFields.map(({ field, fallbackLabel }) => (
+            <View key={fallbackLabel} style={t.fieldRow}>
+              <Text style={t.ccFieldLabel}>{field?.label || fallbackLabel}</Text>
+              <Text style={[t.ccFieldValue, !field && t.fieldValuePlaceholder]}>
+                {field ? (fmtFieldValue(field, values[field.id]) ?? '—') : 'N/A'}
+              </Text>
+            </View>
+          ))}
           {otherFields.map(field => {
             const display = fmtFieldValue(field, values[field.id]);
             return (
@@ -308,19 +300,19 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
               </View>
             );
           })}
+
+          <View style={t.tileFooter}>
+            <Text style={t.tileRefreshed} numberOfLines={1}>
+              {checkedAtLabel ? `Refreshed ${checkedAtLabel}` : 'Not yet populated'}
+            </Text>
+            <TouchableOpacity style={t.refreshBtn} onPress={onRefresh} disabled={refreshing}>
+              {refreshing
+                ? <ActivityIndicator size="small" color={C.primary} />
+                : <Text style={t.refreshTxt}>🔄 Refresh</Text>}
+            </TouchableOpacity>
+          </View>
         </View>
       )}
-
-      <View style={t.tileFooter}>
-        <Text style={t.tileRefreshed} numberOfLines={1}>
-          {checkedAtLabel ? `Refreshed ${checkedAtLabel}` : 'Not yet populated'}
-        </Text>
-        <TouchableOpacity style={t.refreshBtn} onPress={onRefresh} disabled={refreshing}>
-          {refreshing
-            ? <ActivityIndicator size="small" color={C.primary} />
-            : <Text style={t.refreshTxt}>🔄 Refresh</Text>}
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -510,14 +502,17 @@ const t = StyleSheet.create({
     paddingVertical: 6, alignItems: 'center',
   },
   refreshTxt: { fontSize: 11, color: C.primary, fontWeight: '600' },
-  ccTile: { width: 160, padding: 10 },
-  ccTileHeader: { marginBottom: 6 },
-  ccTileFields: { gap: 3, marginBottom: 6 },
+  ccTile: { width: 128, padding: 8 },
+  ccTileHeader: { marginBottom: 4, gap: 6 },
+  ccTileIcon: { width: 22, height: 22, borderRadius: 11 },
+  ccTileIconTxt: { fontSize: 12 },
+  ccTileName: { fontSize: 12 },
+  ccTileFields: { gap: 3, marginBottom: 0 },
   ccFieldLabel: { fontSize: 10, color: C.muted, flexShrink: 1 },
   ccFieldValue: { fontSize: 11, fontWeight: '700', color: C.text },
   ccStatusBadge: {
     alignSelf: 'flex-start', borderWidth: 1.5, borderRadius: 20,
-    paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6,
+    paddingHorizontal: 7, paddingVertical: 2, marginBottom: 4,
   },
   ccStatusTxt: { fontSize: 10, fontWeight: '700' },
   moreToggle: { paddingVertical: 2 },
