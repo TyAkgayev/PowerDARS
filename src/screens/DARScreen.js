@@ -22,11 +22,22 @@ function notify(title, message) {
 // agent goes live (see functions/agents/bestBuyCreditCardAgent.js for the
 // pattern: create/poll endpoints that read the account's category fields
 // dynamically and write into accountReports).
+// Capital One's three cards (Platinum, QuickSilver, Kohls) all live under one
+// login, so they share a single agent object — one trigger logs in once and
+// populates all three accountReports docs, instead of three separate runs.
+const CAPITAL_ONE_AGENT = {
+  checkUrl: 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkCapitalOneStatus',
+  pollUrl: 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollCapitalOneStatus',
+};
+
 const ACCOUNT_AGENTS = {
   'Best Buy': {
     checkUrl: 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkBestBuyStatus',
     pollUrl: 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollBestBuyStatus',
   },
+  'Capital One Platinum': CAPITAL_ONE_AGENT,
+  'Capital One QuickSilver': CAPITAL_ONE_AGENT,
+  'Capital One Kohls': CAPITAL_ONE_AGENT,
 };
 
 const POLL_INTERVAL_MS = 4000;
@@ -378,8 +389,23 @@ export default function DARScreen() {
 
   const categoryAccounts = accounts.filter(a => a.kind === 'category');
 
+  // Some accounts share one agent (e.g. Capital One's three cards, one
+  // login) — find every account that shares the same agent object as the
+  // one clicked, so all of them show a spinner and clear together, even
+  // though only one underlying run actually happens.
+  const siblingIdsFor = (account) => {
+    const agent = ACCOUNT_AGENTS[account.name];
+    if (!agent) return [account.id];
+    return categoryAccounts.filter(a => ACCOUNT_AGENTS[a.name] === agent).map(a => a.id);
+  };
+
   const handleRefreshAccount = async (account) => {
-    setRefreshingIds(prev => new Set(prev).add(account.id));
+    const siblingIds = siblingIdsFor(account);
+    setRefreshingIds(prev => {
+      const next = new Set(prev);
+      siblingIds.forEach(id => next.add(id));
+      return next;
+    });
     try {
       await refreshOneAccount(account);
     } catch (e) {
@@ -387,7 +413,7 @@ export default function DARScreen() {
     } finally {
       setRefreshingIds(prev => {
         const next = new Set(prev);
-        next.delete(account.id);
+        siblingIds.forEach(id => next.delete(id));
         return next;
       });
     }
@@ -399,10 +425,21 @@ export default function DARScreen() {
       notify('Not connected yet', "None of your accounts are wired to an agent yet.");
       return;
     }
+    // Trigger each underlying agent only once, even if several accounts
+    // share it, to avoid redundant/concurrent logins into the same site.
+    const seenAgents = new Set();
+    const toTrigger = connected.filter((account) => {
+      const agent = ACCOUNT_AGENTS[account.name];
+      if (seenAgents.has(agent)) return false;
+      seenAgents.add(agent);
+      return true;
+    });
+
     setAllRefreshing(true);
     setRefreshingIds(new Set(connected.map(a => a.id)));
     try {
-      await Promise.all(connected.map(async (account) => {
+      await Promise.all(toTrigger.map(async (account) => {
+        const siblingIds = siblingIdsFor(account);
         try {
           await refreshOneAccount(account);
         } catch (e) {
@@ -410,7 +447,7 @@ export default function DARScreen() {
         } finally {
           setRefreshingIds(prev => {
             const next = new Set(prev);
-            next.delete(account.id);
+            siblingIds.forEach(id => next.delete(id));
             return next;
           });
         }

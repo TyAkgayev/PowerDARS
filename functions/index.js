@@ -404,6 +404,11 @@ exports.checkBestBuyStatus = bestBuyCreditCardAgent.checkBestBuyStatus;
 exports.pollBestBuyStatus = bestBuyCreditCardAgent.pollBestBuyStatus;
 exports.checkBestBuyStatusScheduled = bestBuyCreditCardAgent.checkBestBuyStatusScheduled;
 
+const capitalOneCreditCardAgent = require('./agents/capitalOneCreditCardAgent');
+exports.checkCapitalOneStatus = capitalOneCreditCardAgent.checkCapitalOneStatus;
+exports.pollCapitalOneStatus = capitalOneCreditCardAgent.pollCapitalOneStatus;
+exports.checkCapitalOneStatusScheduled = capitalOneCreditCardAgent.checkCapitalOneStatusScheduled;
+
 // ── Notifications ────────────────────────────────────────────────────────────
 const courtReminders = require('./notifications/courtReminders');
 exports.sendCourtReminders = courtReminders.sendCourtReminders;

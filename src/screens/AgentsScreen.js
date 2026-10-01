@@ -12,6 +12,8 @@ const CHECK_INSURANCE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunction
 const POLL_INSURANCE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollInsuranceStatus';
 const CHECK_BESTBUY_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkBestBuyStatus';
 const POLL_BESTBUY_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollBestBuyStatus';
+const CHECK_CAPITALONE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkCapitalOneStatus';
+const POLL_CAPITALONE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollCapitalOneStatus';
 const POLL_INTERVAL_MS = 4000;
 
 const C = {
@@ -35,6 +37,7 @@ const C = {
 function useAgentRegistry() {
   const { licenseCheck, insuranceCheck, accounts, accountReports } = useApp();
   const bestBuyAccount = accounts.find(a => a.name === 'Best Buy');
+  const capitalOnePlatinumAccount = accounts.find(a => a.name === 'Capital One Platinum');
 
   return [
     {
@@ -70,6 +73,18 @@ function useAgentRegistry() {
       pollUrl: POLL_BESTBUY_STATUS_URL,
       data: bestBuyAccount ? accountReports[bestBuyAccount.id] : null,
       unavailable: !bestBuyAccount,
+    },
+    {
+      id: 'capitalone',
+      name: 'Capital One Credit Cards',
+      icon: '💳',
+      description: 'Logs into Capital One once and populates the Platinum, QuickSilver, and Kohls cards’ category fields in a single run.',
+      site: 'verified.capitalone.com',
+      schedule: 'Daily at 7:15am ET',
+      checkUrl: CHECK_CAPITALONE_STATUS_URL,
+      pollUrl: POLL_CAPITALONE_STATUS_URL,
+      data: capitalOnePlatinumAccount ? accountReports[capitalOnePlatinumAccount.id] : null,
+      unavailable: !capitalOnePlatinumAccount,
     },
   ];
 }
