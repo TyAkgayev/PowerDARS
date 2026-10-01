@@ -128,6 +128,8 @@ function findFieldByPatterns(fields, patterns, type) {
 const BALANCE_PATTERNS = [/available\s*balance/i, /^balance$/i, /\bbalance\b/i];
 const AMOUNT_DUE_PATTERNS = [/amount\s*due/i, /minimum\s*due/i, /payment\s*due\s*amount/i];
 const DUE_DATE_PATTERNS = [/next\s*payment\s*date/i, /payment\s*due\s*date/i, /due\s*date/i];
+const LAST_PAYMENT_DATE_PATTERNS = [/last\s*payment\s*date/i];
+const BILLING_CYCLE_DAYS = 35; // ~one month, with slack for a late-posting payment
 
 // Parses "YYYY-MM-DD" into a local-midnight Date, or null — string parsing
 // (not `new Date(str)`) so there's no UTC-vs-local shift, same as fmtDate.
@@ -139,22 +141,34 @@ function parseIsoDate(value) {
 }
 
 // "Current" is decided here, by app logic, from the raw numbers/dates the
-// agent retrieves — the agent itself never judges this. A card counts as
-// past due if it has a due date that's already passed while a balance is
-// still owed; otherwise it's current. Returns null (unknown) when there
-// isn't enough data yet to tell either way.
+// agent retrieves — the agent itself never judges this. Green requires BOTH:
+// (1) last month's payment was actually made (a Last Payment Date within the
+// last billing cycle), and (2) the current payment isn't past due yet. Either
+// one failing makes it past due; not having enough data to check at all
+// returns null (shown as "Unknown") rather than guessing.
 function computeCreditCardStatus(fields, values) {
   const dueDateField = findFieldByPatterns(fields, DUE_DATE_PATTERNS, 'date');
   const amountDueField = findFieldByPatterns(fields, AMOUNT_DUE_PATTERNS, 'currency');
-  if (!dueDateField || !amountDueField) return null;
+  const lastPaymentDateField = findFieldByPatterns(fields, LAST_PAYMENT_DATE_PATTERNS, 'date');
+  if (!dueDateField || !amountDueField || !lastPaymentDateField) return null;
 
   const dueDate = parseIsoDate(values?.[dueDateField.id]);
   const amountDue = parseFloat(values?.[amountDueField.id]);
-  if (!dueDate || isNaN(amountDue)) return null;
+  const lastPaymentDate = parseIsoDate(values?.[lastPaymentDateField.id]);
+  if (!dueDate || isNaN(amountDue) || !lastPaymentDate) return null;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  return (dueDate < today && amountDue > 0) ? 'past_due' : 'current';
+
+  // Already past due right now: a balance is owed and the due date has passed.
+  if (dueDate < today && amountDue > 0) return 'past_due';
+
+  const daysSinceLastPayment = Math.round((today - lastPaymentDate) / 86400000);
+  if (daysSinceLastPayment < 0) return null; // last payment date is in the future — can't make sense of it
+
+  // Last month's payment missing (too long since the last one) counts as
+  // past due even if the next due date technically hasn't arrived yet.
+  return daysSinceLastPayment <= BILLING_CYCLE_DAYS ? 'current' : 'past_due';
 }
 
 const CREDIT_STATUS_META = {
@@ -235,10 +249,14 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
 
   const status = computeCreditCardStatus(fields, values) || 'unknown';
   const statusMeta = CREDIT_STATUS_META[status];
+  const tinted = status !== 'unknown';
 
   return (
-    <View style={[t.tile, t.ccTile]}>
-      <View style={t.tileHeader}>
+    <View style={[
+      t.tile, t.ccTile,
+      tinted && { borderColor: statusMeta.color, backgroundColor: `${statusMeta.color}14` },
+    ]}>
+      <View style={[t.tileHeader, t.ccTileHeader]}>
         <View style={[t.tileIcon, { backgroundColor: `${accentColor}20` }]}>
           <Text style={t.tileIconTxt}>{account.icon || category?.icon || '💳'}</Text>
         </View>
@@ -249,22 +267,22 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
         <Text style={[t.ccStatusTxt, { color: statusMeta.color }]}>{statusMeta.label}</Text>
       </View>
 
-      <View style={t.tileFields}>
+      <View style={t.ccTileFields}>
         <View style={t.fieldRow}>
-          <Text style={t.fieldLabel}>{balanceField?.label || 'Balance'}</Text>
-          <Text style={[t.fieldValue, !balanceField && t.fieldValuePlaceholder]}>
+          <Text style={t.ccFieldLabel}>{balanceField?.label || 'Balance'}</Text>
+          <Text style={[t.ccFieldValue, !balanceField && t.fieldValuePlaceholder]}>
             {balanceField ? (fmtFieldValue(balanceField, values[balanceField.id]) ?? '—') : 'N/A'}
           </Text>
         </View>
         <View style={t.fieldRow}>
-          <Text style={t.fieldLabel}>{amountDueField?.label || 'Amount Due'}</Text>
-          <Text style={[t.fieldValue, !amountDueField && t.fieldValuePlaceholder]}>
+          <Text style={t.ccFieldLabel}>{amountDueField?.label || 'Amount Due'}</Text>
+          <Text style={[t.ccFieldValue, !amountDueField && t.fieldValuePlaceholder]}>
             {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
           </Text>
         </View>
         <View style={t.fieldRow}>
-          <Text style={t.fieldLabel}>{dueDateField?.label || 'Due Date'}</Text>
-          <Text style={[t.fieldValue, !dueDateField && t.fieldValuePlaceholder]}>
+          <Text style={t.ccFieldLabel}>{dueDateField?.label || 'Due Date'}</Text>
+          <Text style={[t.ccFieldValue, !dueDateField && t.fieldValuePlaceholder]}>
             {dueDateField ? (fmtFieldValue(dueDateField, values[dueDateField.id]) ?? '—') : 'N/A'}
           </Text>
         </View>
@@ -278,13 +296,13 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
         </TouchableOpacity>
       )}
       {expanded && (
-        <View style={[t.tileFields, { marginTop: 8 }]}>
+        <View style={[t.ccTileFields, { marginTop: 6 }]}>
           {otherFields.map(field => {
             const display = fmtFieldValue(field, values[field.id]);
             return (
               <View key={field.id} style={t.fieldRow}>
-                <Text style={t.fieldLabel} numberOfLines={1}>{field.label}</Text>
-                <Text style={[t.fieldValue, display === null && t.fieldValuePlaceholder]}>
+                <Text style={t.ccFieldLabel} numberOfLines={1}>{field.label}</Text>
+                <Text style={[t.ccFieldValue, display === null && t.fieldValuePlaceholder]}>
                   {display ?? '—'}
                 </Text>
               </View>
@@ -492,12 +510,16 @@ const t = StyleSheet.create({
     paddingVertical: 6, alignItems: 'center',
   },
   refreshTxt: { fontSize: 11, color: C.primary, fontWeight: '600' },
-  ccTile: { width: 190, padding: 12 },
+  ccTile: { width: 160, padding: 10 },
+  ccTileHeader: { marginBottom: 6 },
+  ccTileFields: { gap: 3, marginBottom: 6 },
+  ccFieldLabel: { fontSize: 10, color: C.muted, flexShrink: 1 },
+  ccFieldValue: { fontSize: 11, fontWeight: '700', color: C.text },
   ccStatusBadge: {
     alignSelf: 'flex-start', borderWidth: 1.5, borderRadius: 20,
-    paddingHorizontal: 10, paddingVertical: 3, marginBottom: 10,
+    paddingHorizontal: 8, paddingVertical: 2, marginBottom: 6,
   },
-  ccStatusTxt: { fontSize: 11, fontWeight: '700' },
-  moreToggle: { paddingVertical: 4 },
-  moreToggleTxt: { fontSize: 11, color: C.primary, fontWeight: '600' },
+  ccStatusTxt: { fontSize: 10, fontWeight: '700' },
+  moreToggle: { paddingVertical: 2 },
+  moreToggleTxt: { fontSize: 10, color: C.primary, fontWeight: '600' },
 });
