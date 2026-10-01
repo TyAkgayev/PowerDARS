@@ -284,19 +284,13 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
           <Text style={[t.ccStatusTxt, { color: statusMeta.color }]}>{statusMeta.label}</Text>
         </View>
 
-        <View style={t.ccTileFields}>
-          <View style={t.fieldRow}>
-            <Text style={t.ccFieldLabel}>{amountDueField?.label || 'Amount Due'}</Text>
-            <Text style={[t.ccFieldValue, !amountDueField && t.fieldValuePlaceholder]}>
-              {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
-            </Text>
-          </View>
-          <View style={t.fieldRow}>
-            <Text style={t.ccFieldLabel}>{dueDateField?.label || 'Due Date'}</Text>
-            <Text style={[t.ccFieldValue, !dueDateField && t.fieldValuePlaceholder]}>
-              {dueDateField ? (fmtFieldValue(dueDateField, values[dueDateField.id]) ?? '—') : 'N/A'}
-            </Text>
-          </View>
+        <View style={[t.fieldRow, t.ccTileFields]}>
+          <Text style={[t.ccFieldValue, !amountDueField && t.fieldValuePlaceholder]}>
+            {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
+          </Text>
+          <Text style={[t.ccFieldValue, !dueDateField && t.fieldValuePlaceholder]}>
+            {dueDateField ? (fmtFieldValue(dueDateField, values[dueDateField.id]) ?? '—') : 'N/A'}
+          </Text>
         </View>
 
         <Text style={t.moreToggleTxt}>{expanded ? 'Hide details ▲' : 'More details ▼'}</Text>
