@@ -8,6 +8,7 @@ import { useApp } from '../context/AppContext';
 import { ICONS } from '../config/icons';
 import IconView from '../components/IconView';
 import { authedFetch } from '../utils/api';
+import { getDuePayment } from '../utils/categoryFields';
 
 // ─── Colors ────────────────────────────────────────────────────────────────
 const C = {
@@ -1707,7 +1708,7 @@ function AddBillModal({ visible, onClose, onSave, isMobile }) {
 
 // ─── DashboardScreen ──────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { accounts, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments, creditSchedule, saveCreditSchedule, updateBankBalance, plaidLinkedIds, plaidBalances } = useApp();
+  const { accounts, categories, accountReports, bills, tasks, darsHistory, addTask, toggleTask, deleteTask, userName, projectedIncome, saveProjectedIncome, projectedExpenses, saveProjectedExpenses, deferredItems, saveDeferredItems, billPayments, saveBillPayments, creditSchedule, saveCreditSchedule, updateBankBalance, plaidLinkedIds, plaidBalances } = useApp();
 
   // Auto-sync Plaid balances on mount when there are linked accounts
   useEffect(() => {
@@ -1759,47 +1760,68 @@ export default function DashboardScreen() {
     saveBillPayments({ ...(billPayments || {}), [yearMonth]: updated });
   }, [billPayments, saveBillPayments]);
 
-  // ── Account amounts due (from that month's DARS) → Bills checklist ──
-  // Accounts no longer carry a due date; each month's amount due sits
-  // here until it's dragged onto a calendar day to schedule the payment.
-  // Keyed to the *viewed* month (not necessarily today's), so flipping the
-  // calendar forward shows next month's planned bills once DARS has been
-  // filled out for it.
+  // ── Account amounts due (from DAR) → Bills checklist ──
+  // Each category account's latest known Amount Due / Due Date — populated
+  // by its agent via accountReports, same data DARScreen.js's tiles show —
+  // drives the Bills checklist and calendar placement below. An account with
+  // a known due date is placed directly on that calendar day automatically;
+  // one with an amount due but no known date (no agent wired up yet, or its
+  // category has no Due Date field) falls into the unscheduled bucket for
+  // manual dragging, same as the old flow. Keyed to the *viewed* month for
+  // the scheduled/unscheduled split, though DAR itself only has one current
+  // value per account (no per-month history the way the old DARS sheet did).
   const viewedYearMonth = useMemo(() => `${viewYr}-${String(viewMo + 1).padStart(2, '0')}`, [viewYr, viewMo]);
+  const isCurrentRealMonth = viewYr === today.getFullYear() && viewMo === today.getMonth();
+
+  const categoriesById = useMemo(() => {
+    const map = {};
+    (categories || []).forEach(c => { map[c.id] = c; });
+    return map;
+  }, [categories]);
 
   const creditAmountsDue = useMemo(() => {
-    const paymentRe = /due|payment|bill|premium|amount/i;
     return (accounts || [])
+      .filter(acc => acc.kind === 'category')
       .map(acc => {
-        const amtField = (acc.fields || []).find(f => f.type === 'currency' && paymentRe.test(f.label));
-        if (!amtField) return null;
-        const raw = darsHistory?.[viewedYearMonth]?.entries?.[acc.id]?.[amtField.id];
-        const parsed = parseFloat(raw);
-        const amount = raw === undefined || raw === '' || isNaN(parsed) ? 0 : parsed;
-        return { accountId: acc.id, name: acc.name, icon: acc.icon, amount };
+        const due = getDuePayment(categoriesById[acc.categoryId], accountReports[acc.id]);
+        if (!due || !due.amount || due.amount <= 0) return null;
+        return { accountId: acc.id, name: acc.name, icon: acc.icon, amount: due.amount, dueDateStr: due.dueDateStr };
       })
       .filter(Boolean);
-  }, [accounts, darsHistory, viewedYearMonth]);
+  }, [accounts, categoriesById, accountReports]);
 
   const scheduledThisMonth = (creditSchedule || {})[viewedYearMonth] || {};
 
-  const unscheduledCreditBills = useMemo(() =>
-    creditAmountsDue
-      .filter(b => !scheduledThisMonth[b.accountId])
-      .map(b => ({ id: `credit_${b.accountId}_${viewedYearMonth}`, category: 'bills', ...b })),
-    [creditAmountsDue, scheduledThisMonth, viewedYearMonth]
-  );
+  // No known due date and not yet manually scheduled — surfaced only while
+  // viewing the real current month, so a stale pending amount doesn't linger
+  // on months that have already passed or haven't happened yet.
+  const unscheduledCreditBills = useMemo(() => {
+    if (!isCurrentRealMonth) return [];
+    return creditAmountsDue
+      .filter(b => !b.dueDateStr && !scheduledThisMonth[b.accountId])
+      .map(b => ({
+        id: `credit_${b.accountId}_${viewedYearMonth}`, category: 'bills',
+        accountId: b.accountId, name: b.name, icon: b.icon, amount: b.amount,
+      }));
+  }, [creditAmountsDue, scheduledThisMonth, viewedYearMonth, isCurrentRealMonth]);
 
-  const scheduledCreditBills = useMemo(() =>
-    creditAmountsDue
-      .filter(b => scheduledThisMonth[b.accountId])
+  const scheduledCreditBills = useMemo(() => {
+    const knownDate = creditAmountsDue
+      .filter(b => b.dueDateStr && b.dueDateStr.startsWith(viewedYearMonth))
+      .map(b => ({
+        id: `credit_${b.accountId}_${viewedYearMonth}`,
+        name: b.name, icon: b.icon, amount: b.amount, category: 'bills',
+        dueDate: b.dueDateStr,
+      }));
+    const manuallyScheduled = creditAmountsDue
+      .filter(b => !b.dueDateStr && scheduledThisMonth[b.accountId])
       .map(b => ({
         id: `credit_${b.accountId}_${viewedYearMonth}`,
         name: b.name, icon: b.icon, amount: b.amount, category: 'bills',
         dueDate: scheduledThisMonth[b.accountId],
-      })),
-    [creditAmountsDue, scheduledThisMonth, viewedYearMonth]
-  );
+      }));
+    return [...knownDate, ...manuallyScheduled];
+  }, [creditAmountsDue, scheduledThisMonth, viewedYearMonth]);
 
   const handleScheduleCreditBill = useCallback((accountId, dateStr, amount, name) => {
     saveCreditSchedule({

@@ -413,3 +413,6 @@ exports.checkCapitalOneStatusScheduled = capitalOneCreditCardAgent.checkCapitalO
 const courtReminders = require('./notifications/courtReminders');
 exports.sendCourtReminders = courtReminders.sendCourtReminders;
 exports.sendTestNotification = courtReminders.sendTestNotification;
+
+const cardPaymentReminders = require('./notifications/cardPaymentReminders');
+exports.sendCardPaymentReminders = cardPaymentReminders.sendCardPaymentReminders;

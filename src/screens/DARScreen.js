@@ -5,6 +5,11 @@ import {
 } from 'react-native';
 import { useApp } from '../context/AppContext';
 import { authedFetch } from '../utils/api';
+import {
+  findFieldByPatterns, parseNumericValue, parseIsoDate, fmtDate, fmtDateShort, fmtFieldValue,
+  isCreditCardCategory, computeCreditCardStatus,
+  BALANCE_PATTERNS, AMOUNT_DUE_PATTERNS, DUE_DATE_PATTERNS,
+} from '../utils/categoryFields';
 
 // react-native-web's Alert.alert is a no-op stub, so on web this must go
 // through window.alert instead or it silently does nothing.
@@ -90,121 +95,6 @@ function fmtCheckedAt(checkedAt) {
   if (!checkedAt) return null;
   const d = checkedAt.toDate ? checkedAt.toDate() : new Date(checkedAt);
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
-
-// Agents sometimes return currency/percent values pre-formatted (e.g. "$29.00",
-// "1,234.56") since that's how the number actually appears on the page they're
-// reading, instead of a clean number. Strip everything but digits/sign/decimal
-// before parsing so a stray "$" or "," doesn't turn into NaN downstream.
-function parseNumericValue(value) {
-  if (value === undefined || value === null || value === '') return NaN;
-  if (typeof value === 'number') return value;
-  return parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-}
-
-function fmtFieldValue(field, value) {
-  if (value === undefined || value === null || value === '') return null;
-  if (field.type === 'currency') {
-    const n = parseNumericValue(value);
-    if (isNaN(n)) return String(value);
-    return n < 0
-      ? `-$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-      : `$${n.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-  }
-  if (field.type === 'percent') {
-    const n = parseNumericValue(value);
-    return isNaN(n) ? String(value) : `${n}%`;
-  }
-  if (field.type === 'date') {
-    return fmtDate(value);
-  }
-  return String(value);
-}
-
-// "2027-03-10" -> "03-10-27". Plain string manipulation (not Date parsing) so
-// there's no UTC-vs-local timezone shift risk; falls back to the raw value if
-// it isn't ISO YYYY-MM-DD (e.g. an agent or manual entry wrote something else).
-function fmtDate(value) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
-  if (!m) return String(value);
-  const [, yyyy, mm, dd] = m;
-  return `${mm}-${dd}-${yyyy.slice(2)}`;
-}
-
-// Same as fmtDate but without the year, for glanceable spots (e.g. the
-// collapsed credit card tile) where the current year is implied.
-function fmtDateShort(value) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
-  if (!m) return String(value);
-  const [, , mm, dd] = m;
-  return `${mm}-${dd}`;
-}
-
-// ─── Credit card field matching & status logic ──────────────────────────────
-// Category fields are free-form (id/label/type the user chose), so the
-// concise credit-card view below matches the fields it needs by label
-// pattern rather than a fixed id — best-effort, but consistent with how the
-// rest of this app already matches fields by label (see DashboardScreen.js).
-// Any field that doesn't match a pattern just stays under "More details"
-// instead of disappearing.
-function isCreditCardCategory(category) {
-  return /credit/i.test(category?.name || '');
-}
-
-function findFieldByPatterns(fields, patterns, type) {
-  return fields.find(f => (!type || f.type === type) && patterns.some(re => re.test(f.label)));
-}
-
-const BALANCE_PATTERNS = [/available\s*balance/i, /^balance$/i, /\bbalance\b/i];
-const AMOUNT_DUE_PATTERNS = [/amount\s*due/i, /minimum\s*due/i, /payment\s*due\s*amount/i];
-const DUE_DATE_PATTERNS = [
-  /next\s*payment\s*date/i, /payment\s*due\s*date/i, /due\s*date/i, /date\s*due/i,
-];
-const LAST_PAYMENT_DATE_PATTERNS = [
-  /last\s*payment\s*date/i, /last\s*paid\s*date/i, /date\s*of\s*last\s*payment/i,
-  /previous\s*payment\s*date/i, /last\s*pay(ment)?\b.*date/i,
-  /date\s*last\s*paid/i, /date\s*last\s*payment/i,
-];
-const BILLING_CYCLE_DAYS = 35; // ~one month, with slack for a late-posting payment
-
-// Parses "YYYY-MM-DD" into a local-midnight Date, or null — string parsing
-// (not `new Date(str)`) so there's no UTC-vs-local shift, same as fmtDate.
-function parseIsoDate(value) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
-  if (!m) return null;
-  const [, yyyy, mm, dd] = m;
-  return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
-}
-
-// "Current" is decided here, by app logic, from the raw numbers/dates the
-// agent retrieves — the agent itself never judges this. Green requires BOTH:
-// (1) last month's payment was actually made (a Last Payment Date within the
-// last billing cycle), and (2) the current payment isn't past due yet. Either
-// one failing makes it past due; not having enough data to check at all
-// returns null (shown as "Unknown") rather than guessing.
-function computeCreditCardStatus(fields, values) {
-  const dueDateField = findFieldByPatterns(fields, DUE_DATE_PATTERNS, 'date');
-  const amountDueField = findFieldByPatterns(fields, AMOUNT_DUE_PATTERNS, 'currency');
-  const lastPaymentDateField = findFieldByPatterns(fields, LAST_PAYMENT_DATE_PATTERNS, 'date');
-  if (!dueDateField || !amountDueField || !lastPaymentDateField) return null;
-
-  const dueDate = parseIsoDate(values?.[dueDateField.id]);
-  const amountDue = parseNumericValue(values?.[amountDueField.id]);
-  const lastPaymentDate = parseIsoDate(values?.[lastPaymentDateField.id]);
-  if (!dueDate || isNaN(amountDue) || !lastPaymentDate) return null;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Already past due right now: a balance is owed and the due date has passed.
-  if (dueDate < today && amountDue > 0) return 'past_due';
-
-  const daysSinceLastPayment = Math.round((today - lastPaymentDate) / 86400000);
-  if (daysSinceLastPayment < 0) return null; // last payment date is in the future — can't make sense of it
-
-  // Last month's payment missing (too long since the last one) counts as
-  // past due even if the next due date technically hasn't arrived yet.
-  return daysSinceLastPayment <= BILLING_CYCLE_DAYS ? 'current' : 'past_due';
 }
 
 const CREDIT_STATUS_META = {
