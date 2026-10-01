@@ -120,6 +120,15 @@ function fmtDate(value) {
   return `${mm}-${dd}-${yyyy.slice(2)}`;
 }
 
+// Same as fmtDate but without the year, for glanceable spots (e.g. the
+// collapsed credit card tile) where the current year is implied.
+function fmtDateShort(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+  if (!m) return String(value);
+  const [, , mm, dd] = m;
+  return `${mm}-${dd}`;
+}
+
 // ─── Credit card field matching & status logic ──────────────────────────────
 // Category fields are free-form (id/label/type the user chose), so the
 // concise credit-card view below matches the fields it needs by label
@@ -188,7 +197,7 @@ function computeCreditCardStatus(fields, values) {
 }
 
 const CREDIT_STATUS_META = {
-  current:  { label: 'Current',  color: '#15803D' },
+  current:  { label: 'Current',  color: '#14532D' },
   past_due: { label: 'Past Due', color: '#EF4444' },
   unknown:  { label: 'Unknown',  color: C.faint },
 };
@@ -270,44 +279,41 @@ function CreditCardTile({ account, category, report, onRefresh, refreshing }) {
   return (
     <View style={[
       t.tile, t.ccTile,
+      expanded && t.ccTileExpanded,
       tinted && { borderColor: statusMeta.color, backgroundColor: `${statusMeta.color}14` },
     ]}>
       <TouchableOpacity onPress={() => setExpanded(e => !e)} activeOpacity={0.7}>
-        <View style={[t.tileHeader, t.ccTileHeader]}>
-          <View style={[t.tileIcon, t.ccTileIcon, { backgroundColor: `${accentColor}20` }]}>
-            <Text style={[t.tileIconTxt, t.ccTileIconTxt]}>{account.icon || category?.icon || '💳'}</Text>
-          </View>
-          <Text style={[t.tileName, t.ccTileName]} numberOfLines={1}>{account.name}</Text>
+        <View style={[t.tileIcon, t.ccTileIcon, { backgroundColor: `${accentColor}20`, alignSelf: 'center' }]}>
+          <Text style={[t.tileIconTxt, t.ccTileIconTxt]}>{account.icon || category?.icon || '💳'}</Text>
         </View>
+        <Text style={[t.tileName, t.ccTileName, t.ccCenterTxt]} numberOfLines={1}>{account.name}</Text>
 
-        <View style={[t.ccStatusBadge, { backgroundColor: `${statusMeta.color}20`, borderColor: statusMeta.color }]}>
+        <View style={[t.ccStatusBadge, t.ccStatusBadgeCentered, { backgroundColor: `${statusMeta.color}20`, borderColor: statusMeta.color }]}>
           <Text style={[t.ccStatusTxt, { color: statusMeta.color }]}>{statusMeta.label}</Text>
         </View>
 
-        <View style={[t.fieldRow, t.ccTileFields]}>
-          <Text style={[t.ccFieldValue, !amountDueField && t.fieldValuePlaceholder]}>
-            {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
-          </Text>
-          <Text style={[t.ccFieldValue, !dueDateField && t.fieldValuePlaceholder]}>
-            {dueDateField ? (fmtFieldValue(dueDateField, values[dueDateField.id]) ?? '—') : 'N/A'}
-          </Text>
-        </View>
+        <Text style={[t.ccAmountTxt, !amountDueField && t.fieldValuePlaceholder]}>
+          {amountDueField ? (fmtFieldValue(amountDueField, values[amountDueField.id]) ?? '—') : 'N/A'}
+        </Text>
+        <Text style={[t.ccDateTxt, !dueDateField && t.fieldValuePlaceholder]}>
+          {dueDateField ? (values[dueDateField.id] ? fmtDateShort(values[dueDateField.id]) : '—') : 'N/A'}
+        </Text>
 
-        <Text style={t.moreToggleTxt}>{expanded ? 'Hide details ▲' : 'More details ▼'}</Text>
+        <Text style={t.ccChevron}>{expanded ? '▴' : '▾'}</Text>
       </TouchableOpacity>
 
       {expanded && (
-        <View style={[t.ccTileFields, { marginTop: 8 }]}>
+        <View style={{ marginTop: 8, width: '100%' }}>
           {balanceField && (
-            <View style={t.fieldRow}>
-              <Text style={t.ccFieldLabel}>{balanceField.label}</Text>
+            <View style={t.ccDetailRow}>
+              <Text style={t.ccFieldLabel} numberOfLines={1}>{balanceField.label}</Text>
               <Text style={t.ccFieldValue}>{fmtFieldValue(balanceField, values[balanceField.id]) ?? '—'}</Text>
             </View>
           )}
           {otherFields.map(field => {
             const display = fmtFieldValue(field, values[field.id]);
             return (
-              <View key={field.id} style={t.fieldRow}>
+              <View key={field.id} style={t.ccDetailRow}>
                 <Text style={t.ccFieldLabel} numberOfLines={1}>{field.label}</Text>
                 <Text style={[t.ccFieldValue, display === null && t.fieldValuePlaceholder]}>
                   {display ?? '—'}
@@ -517,19 +523,21 @@ const t = StyleSheet.create({
     paddingVertical: 6, alignItems: 'center',
   },
   refreshTxt: { fontSize: 11, color: C.primary, fontWeight: '600' },
-  ccTile: { width: 128, padding: 8 },
-  ccTileHeader: { marginBottom: 4, gap: 6 },
-  ccTileIcon: { width: 22, height: 22, borderRadius: 11 },
-  ccTileIconTxt: { fontSize: 12 },
-  ccTileName: { fontSize: 12 },
-  ccTileFields: { gap: 3, marginBottom: 0 },
+  ccTile: { width: 132, paddingTop: 10, paddingHorizontal: 10, paddingBottom: 4, alignItems: 'center' },
+  ccTileExpanded: { width: 190, paddingBottom: 10 },
+  ccDetailRow: { marginBottom: 6, width: '100%' },
+  ccTileIcon: { width: 28, height: 28, borderRadius: 14, marginBottom: 6 },
+  ccTileIconTxt: { fontSize: 14 },
+  ccTileName: { fontSize: 12, marginBottom: 6, flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
+  ccCenterTxt: { textAlign: 'center' },
   ccFieldLabel: { fontSize: 10, color: C.muted, flexShrink: 1 },
   ccFieldValue: { fontSize: 11, fontWeight: '700', color: C.text },
   ccStatusBadge: {
-    alignSelf: 'flex-start', borderWidth: 1.5, borderRadius: 20,
-    paddingHorizontal: 7, paddingVertical: 2, marginBottom: 4,
+    borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2,
   },
+  ccStatusBadgeCentered: { alignSelf: 'center', marginBottom: 8 },
   ccStatusTxt: { fontSize: 10, fontWeight: '700' },
-  moreToggle: { paddingVertical: 2 },
-  moreToggleTxt: { fontSize: 10, color: C.primary, fontWeight: '600' },
+  ccAmountTxt: { fontSize: 19, fontWeight: '800', color: C.text, textAlign: 'center' },
+  ccDateTxt: { fontSize: 11, color: C.muted, textAlign: 'center', marginTop: 2, marginBottom: 2 },
+  ccChevron: { fontSize: 11, color: C.faint, textAlign: 'center', lineHeight: 12 },
 });
