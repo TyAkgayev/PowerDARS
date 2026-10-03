@@ -1823,6 +1823,13 @@ export default function DashboardScreen() {
     return [...knownDate, ...manuallyScheduled];
   }, [creditAmountsDue, scheduledThisMonth, viewedYearMonth]);
 
+  // CalendarView only ever plots whatever's in its own `bills` prop onto the
+  // day grid — scheduledCreditBills alone fed the separate Bills checklist
+  // panel, so DAR-sourced due dates never actually showed up on the calendar
+  // squares themselves. Merge them in so a known due date renders as a chip
+  // on that day, same as a manually-added bill.
+  const calendarBills = useMemo(() => [...(bills || []), ...scheduledCreditBills], [bills, scheduledCreditBills]);
+
   const handleScheduleCreditBill = useCallback((accountId, dateStr, amount, name) => {
     saveCreditSchedule({
       ...(creditSchedule || {}),
@@ -1859,7 +1866,7 @@ export default function DashboardScreen() {
       {isMobile ? (
         // ── Mobile: full mobile layout ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
+          <CalendarView bills={calendarBills} accounts={accounts} darsHistory={darsHistory} isMobile={true} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
           <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={true} onEditAccount={setEditingBankAccount} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
           <DeferredPanel deferredItems={deferredItems} onPay={(item) => { setPayDeferModal(item); setPayDeferDate(''); }} />
@@ -1874,7 +1881,7 @@ export default function DashboardScreen() {
       ) : isNarrow ? (
         // ── Narrow desktop: calendar full-width on top, panels stacked below ──
         <View style={s.colStack}>
-          <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
+          <CalendarView bills={calendarBills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
           <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           <MonthlyBillsTracker bills={bills} scheduledCreditBills={scheduledCreditBills} billPayments={billPayments || {}} onTogglePaid={handleToggleBillPaid} unscheduledCreditBills={unscheduledCreditBills} onScheduleCreditBill={handleScheduleCreditBill} cellsRef={cellsRef} onHoverChange={setBillDragOverStr} isMobile={isMobile} yr={viewYr} mo={viewMo} />
           <BanksPanel accounts={accounts} darsHistory={darsHistory} isMobile={false} onEditAccount={setEditingBankAccount} plaidLinkedIds={plaidLinkedIds} plaidBalances={plaidBalances} />
@@ -1890,7 +1897,7 @@ export default function DashboardScreen() {
         // ── Wide desktop: two-column side-by-side ──
         <View style={s.body}>
           <View style={s.left}>
-            <CalendarView bills={bills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
+            <CalendarView bills={calendarBills} accounts={accounts} darsHistory={darsHistory} isMobile={false} projectedIncome={projectedIncome} saveProjectedIncome={saveProjectedIncome} projectedExpenses={projectedExpenses} saveProjectedExpenses={saveProjectedExpenses} deferredItems={deferredItems} saveDeferredItems={saveDeferredItems} cellsRef={cellsRef} billDragOverStr={billDragOverStr} yr={viewYr} mo={viewMo} setYr={setViewYr} setMo={setViewMo} />
             <TaskTracker tasks={tasks} onToggle={toggleTask} onAdd={addTask} onDelete={deleteTask} />
           </View>
           <View style={s.right}>
