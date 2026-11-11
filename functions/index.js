@@ -409,6 +409,13 @@ exports.checkCapitalOneStatus = capitalOneCreditCardAgent.checkCapitalOneStatus;
 exports.pollCapitalOneStatus = capitalOneCreditCardAgent.pollCapitalOneStatus;
 exports.checkCapitalOneStatusScheduled = capitalOneCreditCardAgent.checkCapitalOneStatusScheduled;
 
+// ── Bot ingest ───────────────────────────────────────────────────────────────
+// External automation bots (Grok) push scraped results here instead of the
+// app driving browser-use runs. Writes to the same docs as the agents above.
+const botIngest = require('./agents/botIngest');
+exports.ingestBotResult = botIngest.ingestBotResult;
+exports.botSchema = botIngest.botSchema;
+
 // ── Notifications ────────────────────────────────────────────────────────────
 const courtReminders = require('./notifications/courtReminders');
 exports.sendCourtReminders = courtReminders.sendCourtReminders;
