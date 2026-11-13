@@ -37,7 +37,11 @@ const CAPITALONE_CARDS = [
 
 const MAX_TEXT = 500;
 const MAX_TICKETS = 100;
-const SOURCES = ['dmv', 'geico', 'bestbuy', 'capitalone'];
+const SOURCES = ['dmv', 'dmv_license', 'dmv_tickets', 'geico', 'bestbuy', 'capitalone'];
+// Fields dmv_license may set. Only the keys the bot actually includes are
+// written, so a license-only or registration-only bot doesn't null out the
+// other half (or the tickets list) of licenseStatus/latest.
+const DMV_LICENSE_KEYS = ['licenseStatus', 'registrationStatus', 'registrationExpiration', 'licensePoints'];
 
 function httpError(statusCode, message) {
   const err = new Error(message);
@@ -192,6 +196,30 @@ async function ingest(uid, body) {
   const meta = baseMeta(body, failed);
   const userRef = db.collection('users').doc(uid);
 
+  // Partial DMV updates: merge into licenseStatus/latest without touching
+  // the fields the other half owns.
+  if (source === 'dmv_license' || source === 'dmv_tickets') {
+    const ref = userRef.collection('licenseStatus').doc('latest');
+    if (failed) {
+      await ref.set({ ...meta }, { merge: true });
+      return { written: ['licenseStatus/latest'] };
+    }
+    const full = parseDmv(body.data);
+    let partial;
+    if (source === 'dmv_tickets') {
+      if (!Array.isArray(body.data.tickets)) throw httpError(400, '"data.tickets" must be an array (use [] for no open tickets)');
+      partial = { tickets: full.tickets };
+    } else {
+      partial = {};
+      DMV_LICENSE_KEYS.forEach(k => { if (k in body.data) partial[k] = full[k]; });
+      if (Object.keys(partial).length === 0) {
+        throw httpError(400, `"data" must include at least one of: ${DMV_LICENSE_KEYS.join(', ')}`);
+      }
+    }
+    await ref.set({ ...partial, ...meta }, { merge: true });
+    return { written: ['licenseStatus/latest'], stored: partial };
+  }
+
   if (source === 'dmv' || source === 'geico') {
     const coll = source === 'dmv' ? 'licenseStatus' : 'insuranceStatus';
     const parsed = failed ? EMPTY[source] : (source === 'dmv' ? parseDmv(body.data) : parseGeico(body.data));
@@ -289,6 +317,14 @@ exports.botSchema = onRequest(
               licenseStatus: 'text', registrationStatus: 'text', registrationExpiration: 'date', licensePoints: 'number',
               tickets: [{ ticketNumber: 'text', violationCharge: 'text', violationPoints: 'number|null', hearingDate: 'date' }],
             },
+          },
+          dmv_license: {
+            note: 'Updates only the keys you include; tickets are left alone. Include at least one.',
+            data: { licenseStatus: 'text', registrationStatus: 'text', registrationExpiration: 'date', licensePoints: 'number' },
+          },
+          dmv_tickets: {
+            note: 'Replaces only the open tickets list; license/registration are left alone. Use [] for none.',
+            data: { tickets: [{ ticketNumber: 'text', violationCharge: 'text', violationPoints: 'number|null', hearingDate: 'date' }] },
           },
           geico: { data: { insuranceStatus: '"OK" | "Overdue" | null' } },
           bestbuy: { note: 'data is an object keyed by each field "key"', ...bestbuy },
