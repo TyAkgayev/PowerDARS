@@ -24,9 +24,14 @@
 const crypto = require('crypto');
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
-const { admin, db } = require('../lib/common');
+const { admin, db, requireUser } = require('../lib/common');
 
 const BOT_INGEST_KEY = defineSecret('BOT_INGEST_KEY');
+// The bot's "check now" webhook (a Cursor automation). Both the URL and the
+// key are secrets: the repo is public and the URL alone can start runs.
+const BOT_TRIGGER_URL = defineSecret('BOT_TRIGGER_URL');
+const BOT_TRIGGER_KEY = defineSecret('BOT_TRIGGER_KEY');
+const TRIGGER_COOLDOWN_MS = 3 * 60 * 1000;
 const OWNER_EMAIL = 'takgayev@powerdars.app';
 
 const BESTBUY_ACCOUNT_NAME = 'Best Buy';
@@ -370,6 +375,72 @@ exports.botSchema = onRequest(
     } catch (err) {
       if (err.statusCode) return res.status(err.statusCode).json({ ok: false, error: err.message });
       console.error('botSchema error:', err);
+      res.status(500).json({ ok: false, error: 'Internal error' });
+    }
+  }
+);
+
+// ── triggerBotCheck ──────────────────────────────────────────────────────────
+// Called by the app's "Check Now" buttons (signed-in user). Asks the bot to
+// run right away for the given sources; the bot posts its results to
+// ingestBotResult like a normal scheduled run, usually within minutes. This
+// only starts the run. It stamps botRequestedAt on each affected doc so the
+// app can show "Checking…" until a checkedAt newer than that arrives.
+// Rate-limited to one trigger per TRIGGER_COOLDOWN_MS per user so repeated
+// taps don't stack up bot runs.
+const TRIGGER_DOCS = {
+  dmv: 'licenseStatus', dmv_license: 'licenseStatus', dmv_tickets: 'licenseStatus',
+  geico: 'insuranceStatus', dof: 'dofPaymentPlan',
+};
+
+exports.triggerBotCheck = onRequest(
+  { secrets: [BOT_TRIGGER_URL, BOT_TRIGGER_KEY], cors: true, invoker: 'public' },
+  async (req, res) => {
+    try {
+      if (req.method !== 'POST') throw httpError(405, 'Use POST');
+      const uid = await requireUser(req);
+      const requested = req.body?.sources;
+      let sources;
+      if (requested !== undefined) {
+        if (!Array.isArray(requested) || requested.length === 0 || !requested.every(s => SOURCES.includes(s))) {
+          throw httpError(400, `"sources" must be a non-empty array of: ${SOURCES.join(', ')}`);
+        }
+        sources = [...new Set(requested)];
+      }
+
+      // Claim the cooldown slot atomically so two quick taps can't both pass.
+      const throttleRef = db.collection('users').doc(uid).collection('settings').doc('botTrigger');
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(throttleRef);
+        const last = snap.exists ? snap.data().lastTriggeredAt?.toMillis?.() : null;
+        if (last && Date.now() - last < TRIGGER_COOLDOWN_MS) {
+          const waitSec = Math.ceil((TRIGGER_COOLDOWN_MS - (Date.now() - last)) / 1000);
+          throw httpError(429, `A check was just started. Try again in ${Math.ceil(waitSec / 60)} min.`);
+        }
+        tx.set(throttleRef, { lastTriggeredAt: admin.firestore.Timestamp.now(), sources: sources || 'all' });
+      });
+
+      const resp = await fetch(BOT_TRIGGER_URL.value(), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${BOT_TRIGGER_KEY.value()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(sources ? { sources } : {}),
+        signal: AbortSignal.timeout(15000),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok || payload.success === false) {
+        await throttleRef.delete().catch(() => {}); // don't lock the button out after a failed start
+        console.error('triggerBotCheck webhook error:', resp.status, JSON.stringify(payload).slice(0, 300));
+        throw httpError(502, 'The bot could not be started. Try again shortly.');
+      }
+
+      const colls = [...new Set((sources || Object.keys(TRIGGER_DOCS)).map(s => TRIGGER_DOCS[s]).filter(Boolean))];
+      await Promise.all(colls.map(c => db.collection('users').doc(uid).collection(c).doc('latest')
+        .set({ botRequestedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })));
+
+      res.json({ ok: true, status: 'started', runId: payload.runUuid || null, sources: sources || 'all' });
+    } catch (err) {
+      if (err.statusCode) return res.status(err.statusCode).json({ ok: false, error: err.message });
+      console.error('triggerBotCheck error:', err);
       res.status(500).json({ ok: false, error: 'Internal error' });
     }
   }

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View, Text, ScrollView, TextInput, Modal,
   TouchableOpacity, StyleSheet, useWindowDimensions, Image, ActivityIndicator,
@@ -7,13 +7,8 @@ import { useApp } from '../context/AppContext';
 import { authedFetch } from '../utils/api';
 import { enableCourtReminders, checkCourtRemindersEnabled } from '../utils/pushNotifications';
 
-const CHECK_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkLicenseStatus';
-const POLL_LICENSE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollLicenseStatus';
-const CHECK_INSURANCE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/checkInsuranceStatus';
-const POLL_INSURANCE_STATUS_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/pollInsuranceStatus';
 const SEND_TEST_NOTIFICATION_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/sendTestNotification';
 const TEST_NOTIFICATION_DELAY_SECONDS = 15;
-const POLL_INTERVAL_MS = 4000;
 
 const CAR_IMAGES = {
   bmw:    require('../../assets/bmw.jpg'),
@@ -278,63 +273,66 @@ function daysUntilNextHearing(tickets) {
   return Math.round((soonest - today.getTime()) / 86400000);
 }
 
-// Generic "start a run, then poll for the outcome" hook shared by any
-// StatusPanel-backed check on this card (DMV, Insurance, ...). The agent can
-// take a while (real login flow), so the button's request only starts the
-// run — this polls in the background rather than blocking on it.
-function useCheckPolling({ checkUrl, pollUrl, runningStatus, runId: existingRunId }) {
-  const [checking, setChecking] = useState(false);
+// "Check Now" for the bot-fed tiles. The press asks the backend
+// (triggerBotCheck) to start a bot run; results don't come back in that
+// response. They arrive in Firestore via ingestBotResult a few minutes later.
+// The backend stamps botRequestedAt on each affected doc, so "Checking…" is
+// derived from the docs themselves: a request newer than the last checkedAt
+// and less than BOT_CHECK_TIMEOUT_MS old. That survives page refreshes, and it
+// stops on its own if the bot never reports back.
+const TRIGGER_BOT_CHECK_URL = 'https://us-central1-dars-4e5d0.cloudfunctions.net/triggerBotCheck';
+const BOT_CHECK_TIMEOUT_MS = 15 * 60 * 1000;
+// Sources the Car screen's button asks for. These are the ones the bot's
+// webhook documents; add 'dmv_tickets' / 'dof' here once the bot handles them.
+const CAR_CHECK_SOURCES = ['dmv_license', 'geico'];
+
+function toMillis(ts) {
+  if (!ts) return null;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  const t = new Date(ts).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function isAwaitingBot(check, now) {
+  const requested = toMillis(check?.botRequestedAt);
+  if (!requested || now - requested > BOT_CHECK_TIMEOUT_MS) return false;
+  const checked = toMillis(check?.checkedAt);
+  return !checked || checked < requested;
+}
+
+function useBotCheck(sources, checks) {
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState(null);
-  const pollRef = useRef(null);
+  const [now, setNow] = useState(Date.now());
+  const awaiting = checks.some(c => isAwaitingBot(c, now));
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }, []);
-
-  const pollUntilDone = useCallback((runId) => {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await authedFetch(`${pollUrl}?runId=${encodeURIComponent(runId)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Check failed');
-        if (data.status === 'completed' || data.status === 'failed') {
-          stopPolling();
-          setChecking(false);
-          if (data.status === 'failed') setError(data.error || 'Check failed');
-        }
-      } catch (e) {
-        stopPolling();
-        setChecking(false);
-        setError(e.message);
-      }
-    }, POLL_INTERVAL_MS);
-  }, [stopPolling, pollUrl]);
+  // Re-evaluate periodically while waiting so the spinner times out by itself.
+  useEffect(() => {
+    if (!awaiting) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, [awaiting]);
 
   const trigger = useCallback(async () => {
-    setChecking(true);
+    setStarting(true);
     setError(null);
     try {
-      const res = await authedFetch(checkUrl, { method: 'POST' });
-      const data = await res.json();
+      const res = await authedFetch(TRIGGER_BOT_CHECK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sources }),
+      });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to start check');
-      pollUntilDone(data.runId);
+      setNow(Date.now());
     } catch (e) {
-      setChecking(false);
       setError(e.message);
+    } finally {
+      setStarting(false);
     }
-  }, [checkUrl, pollUntilDone]);
+  }, [sources]);
 
-  // Resume polling if a check was already in flight (e.g. page refresh).
-  useEffect(() => {
-    if (runningStatus === 'running' && existingRunId && !pollRef.current) {
-      setChecking(true);
-      pollUntilDone(existingRunId);
-    }
-    return stopPolling;
-  }, [runningStatus, existingRunId, pollUntilDone, stopPolling]);
-
-  return { checking, error, trigger };
+  return { checking: starting || awaiting, error, trigger };
 }
 
 // DOF payment plan: OK = current, Grace = missed payment but still in the
@@ -342,25 +340,9 @@ function useCheckPolling({ checkUrl, pollUrl, runningStatus, runId: existingRunI
 const DOF_PLAN_COLORS = { OK: '#22C55E', Grace: '#F59E0B', Cancelled: '#EF4444' };
 
 function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
-  const dmv = useCheckPolling({
-    checkUrl: CHECK_LICENSE_STATUS_URL,
-    pollUrl: POLL_LICENSE_STATUS_URL,
-    runningStatus: licenseCheck?.status,
-    runId: licenseCheck?.runId,
-  });
-  const insurance = useCheckPolling({
-    checkUrl: CHECK_INSURANCE_STATUS_URL,
-    pollUrl: POLL_INSURANCE_STATUS_URL,
-    runningStatus: insuranceCheck?.status,
-    runId: insuranceCheck?.runId,
-  });
-  const checking = dmv.checking || insurance.checking;
-  const triggerError = dmv.error || insurance.error;
-
-  const handleCheck = useCallback(() => {
-    dmv.trigger();
-    insurance.trigger();
-  }, [dmv.trigger, insurance.trigger]);
+  const { checking, error: triggerError, trigger: handleCheck } = useBotCheck(
+    CAR_CHECK_SOURCES, [licenseCheck, insuranceCheck, dofCheck]
+  );
 
   // Tapping a tile opens the bot's full analysis for it, when one was sent.
   const [briefTile, setBriefTile] = useState(null); // { label, check }

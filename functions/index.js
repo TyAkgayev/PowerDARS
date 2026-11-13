@@ -415,6 +415,7 @@ exports.checkCapitalOneStatusScheduled = capitalOneCreditCardAgent.checkCapitalO
 const botIngest = require('./agents/botIngest');
 exports.ingestBotResult = botIngest.ingestBotResult;
 exports.botSchema = botIngest.botSchema;
+exports.triggerBotCheck = botIngest.triggerBotCheck;
 
 // ── Notifications ────────────────────────────────────────────────────────────
 const courtReminders = require('./notifications/courtReminders');
