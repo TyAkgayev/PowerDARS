@@ -423,3 +423,6 @@ exports.sendTestNotification = courtReminders.sendTestNotification;
 
 const cardPaymentReminders = require('./notifications/cardPaymentReminders');
 exports.sendCardPaymentReminders = cardPaymentReminders.sendCardPaymentReminders;
+
+const dailyBrief = require('./notifications/dailyBrief');
+exports.sendDailyBrief = dailyBrief.sendDailyBrief;

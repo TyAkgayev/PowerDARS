@@ -37,6 +37,9 @@ const CAPITALONE_CARDS = [
 ];
 
 const MAX_TEXT = 500;
+const MAX_BRIEF = 4000;   // the bot's full write-up, shown when a tile is tapped
+const MAX_ALERTS = 5;     // short warnings that lead the daily push
+const MAX_ALERT_LEN = 160;
 const MAX_TICKETS = 100;
 const SOURCES = ['dmv', 'dmv_license', 'dmv_tickets', 'geico', 'dof', 'bestbuy', 'capitalone'];
 // Fields dmv_license may set. Only the keys the bot actually includes are
@@ -185,8 +188,23 @@ const EMPTY = {
 
 // ── Writes ───────────────────────────────────────────────────────────────────
 
+function toBrief(v) {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s ? s.slice(0, MAX_BRIEF) : null;
+}
+
+function toAlerts(v) {
+  if (!Array.isArray(v)) return [];
+  return v.map(toText).filter(Boolean).map(a => a.slice(0, MAX_ALERT_LEN)).slice(0, MAX_ALERTS);
+}
+
 function baseMeta(body, failed) {
+  // brief/alerts are only set on a successful run; a failed run is merged
+  // without them so the last good analysis stays visible.
+  const analysis = failed ? {} : { brief: toBrief(body.brief), alerts: toAlerts(body.alerts) };
   return {
+    ...analysis,
     source: 'grok',
     prompt: null,
     runId: null,
@@ -325,7 +343,9 @@ exports.botSchema = onRequest(
       res.json({
         post: 'POST ingestBotResult with { "source": <one of below>, "data": {...} }. To report a failed run send ' +
           '{ "source": ..., "status": "failed", "error": "why" }. Optional on any call: "success" (bool), ' +
-          '"summary" (string), "durationMinutes" (number). Dates are YYYY-MM-DD; numbers may be plain numbers.',
+          '"summary" (one sentence), "brief" (your full analysis, up to 4000 chars, shown in the app), ' +
+          '"alerts" (up to 5 short warnings, each under 160 chars, that lead the daily push), ' +
+          '"durationMinutes" (number). Dates are YYYY-MM-DD; numbers may be plain numbers.',
         sources: {
           dmv: {
             data: {

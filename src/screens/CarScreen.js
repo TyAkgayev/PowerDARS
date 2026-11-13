@@ -362,6 +362,12 @@ function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
     insurance.trigger();
   }, [dmv.trigger, insurance.trigger]);
 
+  // Tapping a tile opens the bot's full analysis for it, when one was sent.
+  const [briefTile, setBriefTile] = useState(null); // { label, check }
+  const openBrief = (label, check) => (check?.brief || check?.alerts?.length)
+    ? () => setBriefTile({ label, check })
+    : undefined;
+
   const checkedAtLabel = fmtCheckedAt(licenseCheck?.checkedAt);
   const licenseStat = licenseCheck?.licenseStatus;
   const regStat = licenseCheck?.registrationStatus;
@@ -392,19 +398,21 @@ function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
       </View>
 
       <View style={tt.tilesGrid}>
-        <StatusPanel label="LICENSE" value={licenseStat} />
-        <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Exp ${fmtHearingDate(regExp)}` : null} />
-        <StatusPanel label="POINTS" value={typeof points === 'number' ? String(points) : null} />
+        <StatusPanel label="LICENSE" value={licenseStat} onPress={openBrief('DMV Status', licenseCheck)} />
+        <StatusPanel label="REGISTRATION" value={regStat} sub={regExp ? `Exp ${fmtHearingDate(regExp)}` : null} onPress={openBrief('DMV Status', licenseCheck)} />
+        <StatusPanel label="POINTS" value={typeof points === 'number' ? String(points) : null} onPress={openBrief('DMV Status', licenseCheck)} />
         <StatusPanel
           label="COURTS"
           value={hasChecked ? (nextHearingDays === null ? 'None' : (nextHearingDays === 0 ? 'Today' : `${nextHearingDays}d`)) : null}
           sub={nextHearingDays !== null ? 'next hearing' : null}
           alert={nextHearingDays !== null}
+          onPress={openBrief('DMV Status', licenseCheck)}
         />
         <StatusPanel
           label="INSURANCE"
           value={insuranceCheck?.insuranceStatus}
           alert={insuranceCheck?.insuranceStatus ? insuranceCheck.insuranceStatus === 'Overdue' : undefined}
+          onPress={openBrief('Insurance', insuranceCheck)}
         />
         <StatusPanel label="LEASE" placeholder />
         <StatusPanel label="BRIDGES & TUNNELS" placeholder />
@@ -412,8 +420,11 @@ function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
           label="DOF PAYMENT PLAN"
           value={dofCheck?.planStatus}
           color={DOF_PLAN_COLORS[dofCheck?.planStatus]}
+          onPress={openBrief('DOF Payment Plan', dofCheck)}
         />
       </View>
+
+      <BriefModal tile={briefTile} onClose={() => setBriefTile(null)} />
 
       {(triggerError || licenseCheck?.status === 'failed' || insuranceCheck?.status === 'failed' || dofCheck?.status === 'failed') && (
         <Text style={tt.error}>
@@ -540,25 +551,72 @@ function CourtsCard({ licenseCheck, isMobile }) {
 // Small square status tile used in the DMV Status grid. `alert` overrides the
 // text-based color heuristic for numeric fields (Points, Courts) where
 // "Valid"/"Suspended" keyword matching doesn't apply — true=red, false=green.
-function StatusPanel({ label, value, sub, placeholder, alert, color: colorOverride }) {
+// onPress (optional) makes the tile tappable and shows a small ⓘ badge —
+// used to open the bot's brief for that tile.
+function StatusPanel({ label, value, sub, placeholder, alert, color: colorOverride, onPress }) {
+  const Wrapper = onPress ? TouchableOpacity : View;
+  const wrapperProps = onPress ? { onPress, activeOpacity: 0.7 } : {};
   if (placeholder || value == null) {
     return (
-      <View style={[tt.tile, tt.tilePlaceholder]}>
+      <Wrapper {...wrapperProps} style={[tt.tile, tt.tilePlaceholder]}>
+        {!!onPress && <Text style={[tt.tileInfo, { color: C.faint }]}>ⓘ</Text>}
         <Text style={tt.tileLabelMuted}>{label}</Text>
         <Text style={tt.tileValueMuted}>{placeholder ? 'N/A' : '—'}</Text>
-      </View>
+      </Wrapper>
     );
   }
   const color = colorOverride
     || (alert !== undefined ? (alert ? '#EF4444' : '#22C55E') : licenseStatusColor(value));
   return (
-    <View style={[tt.tile, { backgroundColor: `${color}1A`, borderColor: color }]}>
+    <Wrapper {...wrapperProps} style={[tt.tile, { backgroundColor: `${color}1A`, borderColor: color }]}>
+      {!!onPress && <Text style={[tt.tileInfo, { color }]}>ⓘ</Text>}
       <Text style={[tt.tileLabel, { color }]}>{label}</Text>
       <Text style={[tt.tileValue, { color }]}>{value}</Text>
       {!!sub && <Text style={[tt.tileSub, { color }]}>{sub}</Text>}
-    </View>
+    </Wrapper>
   );
 }
+
+// The bot's analysis for one tile: alerts first, then the full brief.
+function BriefModal({ tile, onClose }) {
+  const check = tile?.check;
+  const alerts = check?.alerts || [];
+  const checkedAt = fmtCheckedAt(check?.checkedAt);
+  return (
+    <Modal visible={!!tile} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={bm.overlay} onPress={onClose} activeOpacity={1}>
+        <TouchableOpacity activeOpacity={1} style={bm.box}>
+          <Text style={bm.title}>{tile?.label}</Text>
+          {!!checkedAt && <Text style={bm.sub}>Checked {checkedAt}</Text>}
+          <ScrollView style={bm.scroll}>
+            {alerts.map((a, i) => (
+              <View key={i} style={bm.alert}>
+                <Text style={bm.alertTxt}>⚠️ {a}</Text>
+              </View>
+            ))}
+            {!!check?.brief && <Text style={bm.body}>{check.brief}</Text>}
+          </ScrollView>
+          <TouchableOpacity style={bm.closeBtn} onPress={onClose}>
+            <Text style={bm.closeTxt}>Close</Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
+const bm = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 16 },
+  box: { backgroundColor: C.card, borderRadius: 18, padding: 20, width: '100%', maxWidth: 520, maxHeight: '85%' },
+  title: { fontSize: 17, fontWeight: '700', color: C.text },
+  sub: { fontSize: 12, color: C.muted, marginTop: 4, marginBottom: 12 },
+  scroll: { flexGrow: 0 },
+  alert: { backgroundColor: '#FEF3C7', borderRadius: 10, padding: 10, marginBottom: 8 },
+  alertTxt: { fontSize: 13, color: '#92400E', fontWeight: '600' },
+  body: { fontSize: 14, lineHeight: 21, color: C.text, marginTop: 4 },
+  closeBtn: { alignSelf: 'flex-end', marginTop: 14, backgroundColor: C.primary, paddingHorizontal: 18, paddingVertical: 9, borderRadius: 10 },
+  closeTxt: { color: '#fff', fontWeight: '600', fontSize: 13 },
+});
 
 const tt = StyleSheet.create({
   card: {
@@ -591,6 +649,7 @@ const tt = StyleSheet.create({
     borderWidth: 2, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center', padding: 8,
   },
+  tileInfo: { position: 'absolute', top: 4, right: 7, fontSize: 11, fontWeight: '700' },
   tileLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5, textAlign: 'center' },
   tileValue: { fontSize: 15, fontWeight: '800', marginTop: 3, textAlign: 'center' },
   tileSub: { fontSize: 9, fontWeight: '600', marginTop: 2, textAlign: 'center', opacity: 0.85 },
