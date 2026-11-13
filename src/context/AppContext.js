@@ -15,6 +15,8 @@ const EMPTY_LICENSE_CHECK = {
 
 const EMPTY_INSURANCE_CHECK = { insuranceStatus: null, status: null, error: null, checkedAt: null };
 
+const EMPTY_DOF_CHECK = { planStatus: null, status: null, error: null, checkedAt: null };
+
 const currentMonthStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -51,6 +53,7 @@ export function AppProvider({ children }) {
   const [cars, setCars] = useState([]);
   const [licenseCheck, setLicenseCheck] = useState(EMPTY_LICENSE_CHECK);
   const [insuranceCheck, setInsuranceCheck] = useState(EMPTY_INSURANCE_CHECK);
+  const [dofCheck, setDofCheck] = useState(EMPTY_DOF_CHECK);
   const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
   const [workSchedule, setWorkSchedule] = useState({});
   const [projectedExpenses, setProjectedExpenses] = useState({});
@@ -174,6 +177,15 @@ export function AppProvider({ children }) {
     if (!uid) return;
     const unsub = onSnapshot(uDoc('insuranceStatus', 'latest'), (snap) => {
       setInsuranceCheck(snap.exists() ? snap.data() : EMPTY_INSURANCE_CHECK);
+    });
+    return unsub;
+  }, [uid]);
+
+  // NYC DOF payment plan status, written by the Grok bot via ingestBotResult
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = onSnapshot(uDoc('dofPaymentPlan', 'latest'), (snap) => {
+      setDofCheck(snap.exists() ? snap.data() : EMPTY_DOF_CHECK);
     });
     return unsub;
   }, [uid]);
@@ -419,6 +431,7 @@ export function AppProvider({ children }) {
       cars, addCar, updateCar, deleteCar,
       licenseCheck,
       insuranceCheck,
+      dofCheck,
       rnProfile, saveRNProfile,
       workSchedule, setWorkShift, deleteWorkShift,
     }}>

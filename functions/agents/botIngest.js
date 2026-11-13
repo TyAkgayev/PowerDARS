@@ -6,6 +6,7 @@
 //
 //   dmv        -> users/{uid}/licenseStatus/latest
 //   geico      -> users/{uid}/insuranceStatus/latest
+//   dof        -> users/{uid}/dofPaymentPlan/latest (NYC DOF ticket payment plan)
 //   bestbuy    -> users/{uid}/accountReports/{Best Buy accountId}
 //   capitalone -> users/{uid}/accountReports/{each of the 3 card accountIds}
 //
@@ -37,7 +38,7 @@ const CAPITALONE_CARDS = [
 
 const MAX_TEXT = 500;
 const MAX_TICKETS = 100;
-const SOURCES = ['dmv', 'dmv_license', 'dmv_tickets', 'geico', 'bestbuy', 'capitalone'];
+const SOURCES = ['dmv', 'dmv_license', 'dmv_tickets', 'geico', 'dof', 'bestbuy', 'capitalone'];
 // Fields dmv_license may set. Only the keys the bot actually includes are
 // written, so a license-only or registration-only bot doesn't null out the
 // other half (or the tickets list) of licenseStatus/latest.
@@ -167,9 +168,19 @@ function parseGeico(data) {
   return { insuranceStatus: normalized };
 }
 
+// NYC DOF payment plan: OK (current), Grace (missed payment, still in the
+// grace window), Cancelled (plan defaulted). Anything else becomes null.
+function parseDof(data) {
+  const s = (toText(data?.planStatus) || '').toLowerCase();
+  const planStatus = s === 'ok' ? 'OK' : s === 'grace' ? 'Grace'
+    : (s === 'cancelled' || s === 'canceled') ? 'Cancelled' : null;
+  return { planStatus };
+}
+
 const EMPTY = {
   dmv: { licenseStatus: null, registrationStatus: null, registrationExpiration: null, licensePoints: null, tickets: [] },
   geico: { insuranceStatus: null },
+  dof: { planStatus: null },
 };
 
 // ── Writes ───────────────────────────────────────────────────────────────────
@@ -220,9 +231,13 @@ async function ingest(uid, body) {
     return { written: ['licenseStatus/latest'], stored: partial };
   }
 
-  if (source === 'dmv' || source === 'geico') {
-    const coll = source === 'dmv' ? 'licenseStatus' : 'insuranceStatus';
-    const parsed = failed ? EMPTY[source] : (source === 'dmv' ? parseDmv(body.data) : parseGeico(body.data));
+  if (source === 'dmv' || source === 'geico' || source === 'dof') {
+    const coll = { dmv: 'licenseStatus', geico: 'insuranceStatus', dof: 'dofPaymentPlan' }[source];
+    const parse = { dmv: parseDmv, geico: parseGeico, dof: parseDof }[source];
+    const parsed = failed ? EMPTY[source] : parse(body.data);
+    if (source === 'dof' && !failed && parsed.planStatus === null) {
+      throw httpError(400, '"data.planStatus" must be "OK", "Grace" or "Cancelled"');
+    }
     // On failure, merge so the last good values stay visible next to the error.
     await userRef.collection(coll).doc('latest').set(
       failed ? { ...meta } : { ...parsed, ...meta },
@@ -327,6 +342,7 @@ exports.botSchema = onRequest(
             data: { tickets: [{ ticketNumber: 'text', violationCharge: 'text', violationPoints: 'number|null', hearingDate: 'date' }] },
           },
           geico: { data: { insuranceStatus: '"OK" | "Overdue" | null' } },
+          dof: { data: { planStatus: '"OK" | "Grace" | "Cancelled"' } },
           bestbuy: { note: 'data is an object keyed by each field "key"', ...bestbuy },
           capitalone: { note: 'data is { platinum: {...}, quicksilver: {...}, kohls: {...} }, each keyed by field "key"', ...capitalone },
         },

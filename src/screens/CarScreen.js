@@ -337,7 +337,11 @@ function useCheckPolling({ checkUrl, pollUrl, runningStatus, runId: existingRunI
   return { checking, error, trigger };
 }
 
-function DMVStatusCard({ licenseCheck, insuranceCheck, isMobile }) {
+// DOF payment plan: OK = current, Grace = missed payment but still in the
+// grace window, Cancelled = plan defaulted.
+const DOF_PLAN_COLORS = { OK: '#22C55E', Grace: '#F59E0B', Cancelled: '#EF4444' };
+
+function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
   const dmv = useCheckPolling({
     checkUrl: CHECK_LICENSE_STATUS_URL,
     pollUrl: POLL_LICENSE_STATUS_URL,
@@ -404,12 +408,16 @@ function DMVStatusCard({ licenseCheck, insuranceCheck, isMobile }) {
         />
         <StatusPanel label="LEASE" placeholder />
         <StatusPanel label="BRIDGES & TUNNELS" placeholder />
-        <StatusPanel label="DOF PAYMENT PLAN" placeholder />
+        <StatusPanel
+          label="DOF PAYMENT PLAN"
+          value={dofCheck?.planStatus}
+          color={DOF_PLAN_COLORS[dofCheck?.planStatus]}
+        />
       </View>
 
-      {(triggerError || licenseCheck?.status === 'failed' || insuranceCheck?.status === 'failed') && (
+      {(triggerError || licenseCheck?.status === 'failed' || insuranceCheck?.status === 'failed' || dofCheck?.status === 'failed') && (
         <Text style={tt.error}>
-          {triggerError || licenseCheck?.error || insuranceCheck?.error || 'Something went wrong checking DMV status.'}
+          {triggerError || licenseCheck?.error || insuranceCheck?.error || dofCheck?.error || 'Something went wrong checking DMV status.'}
         </Text>
       )}
 
@@ -532,7 +540,7 @@ function CourtsCard({ licenseCheck, isMobile }) {
 // Small square status tile used in the DMV Status grid. `alert` overrides the
 // text-based color heuristic for numeric fields (Points, Courts) where
 // "Valid"/"Suspended" keyword matching doesn't apply — true=red, false=green.
-function StatusPanel({ label, value, sub, placeholder, alert }) {
+function StatusPanel({ label, value, sub, placeholder, alert, color: colorOverride }) {
   if (placeholder || value == null) {
     return (
       <View style={[tt.tile, tt.tilePlaceholder]}>
@@ -541,7 +549,8 @@ function StatusPanel({ label, value, sub, placeholder, alert }) {
       </View>
     );
   }
-  const color = alert !== undefined ? (alert ? '#EF4444' : '#22C55E') : licenseStatusColor(value);
+  const color = colorOverride
+    || (alert !== undefined ? (alert ? '#EF4444' : '#22C55E') : licenseStatusColor(value));
   return (
     <View style={[tt.tile, { backgroundColor: `${color}1A`, borderColor: color }]}>
       <Text style={[tt.tileLabel, { color }]}>{label}</Text>
@@ -610,7 +619,7 @@ const tt = StyleSheet.create({
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
 export default function CarScreen() {
-  const { cars, addCar, updateCar, deleteCar, licenseCheck, insuranceCheck } = useApp();
+  const { cars, addCar, updateCar, deleteCar, licenseCheck, insuranceCheck, dofCheck } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -645,7 +654,7 @@ export default function CarScreen() {
       </View>
 
       {/* License Status */}
-      <DMVStatusCard licenseCheck={licenseCheck} insuranceCheck={insuranceCheck} isMobile={isMobile} />
+      <DMVStatusCard licenseCheck={licenseCheck} insuranceCheck={insuranceCheck} dofCheck={dofCheck} isMobile={isMobile} />
 
       {/* Courts */}
       <CourtsCard licenseCheck={licenseCheck} isMobile={isMobile} />
