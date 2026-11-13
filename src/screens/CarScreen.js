@@ -339,9 +339,9 @@ function useBotCheck(sources, checks) {
 // grace window, Cancelled = plan defaulted.
 const DOF_PLAN_COLORS = { OK: '#22C55E', Grace: '#F59E0B', Cancelled: '#EF4444' };
 
-function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
+function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, leaseCheck, isMobile }) {
   const { checking, error: triggerError, trigger: handleCheck } = useBotCheck(
-    CAR_CHECK_SOURCES, [licenseCheck, insuranceCheck, dofCheck]
+    CAR_CHECK_SOURCES, [licenseCheck, insuranceCheck, dofCheck, leaseCheck]
   );
 
   // Tapping a tile opens the bot's full analysis for it, when one was sent.
@@ -396,7 +396,13 @@ function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
           alert={insuranceCheck?.insuranceStatus ? insuranceCheck.insuranceStatus === 'Overdue' : undefined}
           onPress={openBrief('Insurance', insuranceCheck)}
         />
-        <StatusPanel label="LEASE" placeholder />
+        <StatusPanel
+          label="LEASE"
+          value={leaseCheck?.leaseStatus}
+          sub={leaseCheck?.dueDate ? `Due ${fmtHearingDate(leaseCheck.dueDate)}` : null}
+          alert={leaseCheck?.leaseStatus ? leaseCheck.leaseStatus === 'Overdue' : undefined}
+          onPress={openBrief('Nissan Lease', leaseCheck)}
+        />
         <StatusPanel label="BRIDGES & TUNNELS" placeholder />
         <StatusPanel
           label="DOF PAYMENT PLAN"
@@ -408,9 +414,9 @@ function DMVStatusCard({ licenseCheck, insuranceCheck, dofCheck, isMobile }) {
 
       <BriefModal tile={briefTile} onClose={() => setBriefTile(null)} />
 
-      {(triggerError || licenseCheck?.status === 'failed' || insuranceCheck?.status === 'failed' || dofCheck?.status === 'failed') && (
+      {(triggerError || licenseCheck?.status === 'failed' || insuranceCheck?.status === 'failed' || dofCheck?.status === 'failed' || leaseCheck?.status === 'failed') && (
         <Text style={tt.error}>
-          {triggerError || licenseCheck?.error || insuranceCheck?.error || dofCheck?.error || 'Something went wrong checking DMV status.'}
+          {triggerError || licenseCheck?.error || insuranceCheck?.error || dofCheck?.error || leaseCheck?.error || 'Something went wrong checking DMV status.'}
         </Text>
       )}
 
@@ -660,7 +666,7 @@ const tt = StyleSheet.create({
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
 export default function CarScreen() {
-  const { cars, addCar, updateCar, deleteCar, licenseCheck, insuranceCheck, dofCheck } = useApp();
+  const { cars, addCar, updateCar, deleteCar, licenseCheck, insuranceCheck, dofCheck, leaseCheck } = useApp();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -695,7 +701,7 @@ export default function CarScreen() {
       </View>
 
       {/* License Status */}
-      <DMVStatusCard licenseCheck={licenseCheck} insuranceCheck={insuranceCheck} dofCheck={dofCheck} isMobile={isMobile} />
+      <DMVStatusCard licenseCheck={licenseCheck} insuranceCheck={insuranceCheck} dofCheck={dofCheck} leaseCheck={leaseCheck} isMobile={isMobile} />
 
       {/* Courts */}
       <CourtsCard licenseCheck={licenseCheck} isMobile={isMobile} />

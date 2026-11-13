@@ -7,6 +7,7 @@
 //   dmv        -> users/{uid}/licenseStatus/latest
 //   geico      -> users/{uid}/insuranceStatus/latest
 //   dof        -> users/{uid}/dofPaymentPlan/latest (NYC DOF ticket payment plan)
+//   lease      -> users/{uid}/leaseStatus/latest (Nissan lease account)
 //   bestbuy    -> users/{uid}/accountReports/{Best Buy accountId}
 //   capitalone -> users/{uid}/accountReports/{each of the 3 card accountIds}
 //
@@ -46,7 +47,7 @@ const MAX_BRIEF = 4000;   // the bot's full write-up, shown when a tile is tappe
 const MAX_ALERTS = 5;     // short warnings that lead the daily push
 const MAX_ALERT_LEN = 160;
 const MAX_TICKETS = 100;
-const SOURCES = ['dmv', 'dmv_license', 'dmv_tickets', 'geico', 'dof', 'bestbuy', 'capitalone'];
+const SOURCES = ['dmv', 'dmv_license', 'dmv_tickets', 'geico', 'dof', 'lease', 'bestbuy', 'capitalone'];
 // Fields dmv_license may set. Only the keys the bot actually includes are
 // written, so a license-only or registration-only bot doesn't null out the
 // other half (or the tickets list) of licenseStatus/latest.
@@ -185,10 +186,26 @@ function parseDof(data) {
   return { planStatus };
 }
 
+// Nissan lease: OK (nothing past due) or Overdue, plus the payment details
+// the Lease tile and daily brief show.
+function parseLease(data) {
+  const s = (toText(data?.leaseStatus) || '').toLowerCase();
+  return {
+    leaseStatus: s === 'ok' ? 'OK' : (s === 'overdue' || s === 'past due') ? 'Overdue' : null,
+    amountDue: toNumber(data?.amountDue),
+    dueDate: toIsoDate(data?.dueDate),
+    autopay: typeof data?.autopay === 'boolean' ? data.autopay : null,
+    paymentsRemaining: toNumber(data?.paymentsRemaining),
+    leaseEndDate: toIsoDate(data?.leaseEndDate),
+    milesAllowed: toNumber(data?.milesAllowed),
+  };
+}
+
 const EMPTY = {
   dmv: { licenseStatus: null, registrationStatus: null, registrationExpiration: null, licensePoints: null, tickets: [] },
   geico: { insuranceStatus: null },
   dof: { planStatus: null },
+  lease: { leaseStatus: null, amountDue: null, dueDate: null, autopay: null, paymentsRemaining: null, leaseEndDate: null, milesAllowed: null },
 };
 
 // ── Writes ───────────────────────────────────────────────────────────────────
@@ -254,12 +271,15 @@ async function ingest(uid, body) {
     return { written: ['licenseStatus/latest'], stored: partial };
   }
 
-  if (source === 'dmv' || source === 'geico' || source === 'dof') {
-    const coll = { dmv: 'licenseStatus', geico: 'insuranceStatus', dof: 'dofPaymentPlan' }[source];
-    const parse = { dmv: parseDmv, geico: parseGeico, dof: parseDof }[source];
+  if (source === 'dmv' || source === 'geico' || source === 'dof' || source === 'lease') {
+    const coll = { dmv: 'licenseStatus', geico: 'insuranceStatus', dof: 'dofPaymentPlan', lease: 'leaseStatus' }[source];
+    const parse = { dmv: parseDmv, geico: parseGeico, dof: parseDof, lease: parseLease }[source];
     const parsed = failed ? EMPTY[source] : parse(body.data);
     if (source === 'dof' && !failed && parsed.planStatus === null) {
       throw httpError(400, '"data.planStatus" must be "OK", "Grace" or "Cancelled"');
+    }
+    if (source === 'lease' && !failed && parsed.leaseStatus === null) {
+      throw httpError(400, '"data.leaseStatus" must be "OK" or "Overdue"');
     }
     // On failure, merge so the last good values stay visible next to the error.
     await userRef.collection(coll).doc('latest').set(
@@ -368,6 +388,12 @@ exports.botSchema = onRequest(
           },
           geico: { data: { insuranceStatus: '"OK" | "Overdue" | null' } },
           dof: { data: { planStatus: '"OK" | "Grace" | "Cancelled"' } },
+          lease: {
+            data: {
+              leaseStatus: '"OK" | "Overdue"', amountDue: 'number', dueDate: 'date', autopay: 'true|false',
+              paymentsRemaining: 'number', leaseEndDate: 'date', milesAllowed: 'number',
+            },
+          },
           bestbuy: { note: 'data is an object keyed by each field "key"', ...bestbuy },
           capitalone: { note: 'data is { platinum: {...}, quicksilver: {...}, kohls: {...} }, each keyed by field "key"', ...capitalone },
         },
@@ -390,7 +416,7 @@ exports.botSchema = onRequest(
 // taps don't stack up bot runs.
 const TRIGGER_DOCS = {
   dmv: 'licenseStatus', dmv_license: 'licenseStatus', dmv_tickets: 'licenseStatus',
-  geico: 'insuranceStatus', dof: 'dofPaymentPlan',
+  geico: 'insuranceStatus', dof: 'dofPaymentPlan', lease: 'leaseStatus',
 };
 
 exports.triggerBotCheck = onRequest(

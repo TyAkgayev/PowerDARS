@@ -17,6 +17,8 @@ const EMPTY_INSURANCE_CHECK = { insuranceStatus: null, status: null, error: null
 
 const EMPTY_DOF_CHECK = { planStatus: null, status: null, error: null, checkedAt: null };
 
+const EMPTY_LEASE_CHECK = { leaseStatus: null, amountDue: null, dueDate: null, status: null, error: null, checkedAt: null };
+
 const currentMonthStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -54,6 +56,7 @@ export function AppProvider({ children }) {
   const [licenseCheck, setLicenseCheck] = useState(EMPTY_LICENSE_CHECK);
   const [insuranceCheck, setInsuranceCheck] = useState(EMPTY_INSURANCE_CHECK);
   const [dofCheck, setDofCheck] = useState(EMPTY_DOF_CHECK);
+  const [leaseCheck, setLeaseCheck] = useState(EMPTY_LEASE_CHECK);
   const [rnProfile, setRNProfile] = useState({ licenseNumber: '', expiration: '', state: '', compact: false, notes: '' });
   const [workSchedule, setWorkSchedule] = useState({});
   const [projectedExpenses, setProjectedExpenses] = useState({});
@@ -186,6 +189,15 @@ export function AppProvider({ children }) {
     if (!uid) return;
     const unsub = onSnapshot(uDoc('dofPaymentPlan', 'latest'), (snap) => {
       setDofCheck(snap.exists() ? snap.data() : EMPTY_DOF_CHECK);
+    });
+    return unsub;
+  }, [uid]);
+
+  // Nissan lease status, written by the bot via ingestBotResult
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = onSnapshot(uDoc('leaseStatus', 'latest'), (snap) => {
+      setLeaseCheck(snap.exists() ? snap.data() : EMPTY_LEASE_CHECK);
     });
     return unsub;
   }, [uid]);
@@ -432,6 +444,7 @@ export function AppProvider({ children }) {
       licenseCheck,
       insuranceCheck,
       dofCheck,
+      leaseCheck,
       rnProfile, saveRNProfile,
       workSchedule, setWorkShift, deleteWorkShift,
     }}>

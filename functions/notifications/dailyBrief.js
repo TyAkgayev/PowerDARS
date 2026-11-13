@@ -1,5 +1,5 @@
 // Daily brief push: one notification each morning that sums up every
-// bot-fed status tile on the Car screen (DMV, Insurance, DOF payment plan).
+// bot-fed status tile on the Car screen (DMV, Insurance, DOF payment plan, Lease).
 // Runs after the Grok bots' morning runs and after the court (8:00) and card
 // (8:15) reminders. For each tile it uses, in order: the bot's "alerts"
 // (short warnings), else its one-line "summary", else the bare status
@@ -16,6 +16,7 @@ const BRIEF_TILES = [
   { coll: 'licenseStatus', label: 'DMV', value: d => d.licenseStatus && `License ${d.licenseStatus}` },
   { coll: 'insuranceStatus', label: 'Insurance', value: d => d.insuranceStatus },
   { coll: 'dofPaymentPlan', label: 'DOF plan', value: d => d.planStatus },
+  { coll: 'leaseStatus', label: 'Lease', value: d => d.leaseStatus && (d.dueDate ? `${d.leaseStatus}, next payment ${d.dueDate}` : d.leaseStatus) },
 ];
 
 function fmtDate(d) {
